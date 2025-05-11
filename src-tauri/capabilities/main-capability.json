@@ -1,0 +1,31 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Main window capabilities",
+  "windows": ["main"],
+  "permissions": [
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-size",
+    "core:window:allow-inner-size",
+    "core:window:allow-set-position",
+    "core:window:allow-set-background-color",
+    "core:webview:allow-set-webview-background-color",
+    "core:event:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:path:default",
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "$APPCONFIG/seeku-settings.json" }]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [{ "path": "$APPCONFIG/seeku-settings.json" }]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": ["$APPCONFIG"]
+    }
+  ]
+}
