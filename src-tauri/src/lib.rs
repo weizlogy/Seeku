@@ -1,6 +1,10 @@
+mod searcher;
+
 use tauri::{menu::{Menu, MenuItem}, App, AppHandle, Manager, Result, Wry};
 use std::fs;
 use std::path::PathBuf;
+
+use crate::searcher::*;
 
 const SETTINGS_FILE_NAME: &str = "seeku-settings.json";
 
@@ -20,7 +24,8 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       load_window_settings,
-      save_window_settings
+      save_window_settings,
+      search_files
     ])
     // メニューで何かイベントがあったら…
     .on_menu_event(|app, event| {
@@ -83,4 +88,10 @@ fn save_window_settings(app_handle: AppHandle<Wry>, settings: WindowSettings) ->
   let content = serde_json::to_string_pretty(&settings)?;
   fs::write(path, content)?;
   Ok(())
+}
+
+#[tauri::command]
+fn search_files(app_handle: AppHandle<Wry>, term: String) -> Result<Vec<searcher::SearchItem>> {
+  searcher::search_with_powershell(&app_handle, &term)
+    .map_err(|e_str| tauri::Error::AssetNotFound(e_str))
 }

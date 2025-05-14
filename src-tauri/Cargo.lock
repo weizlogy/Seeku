@@ -6,6 +6,7 @@ version = 3
 name = "Seeku"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "log",
  "serde",
  "serde_json",

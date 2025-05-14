@@ -1,31 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { PhysicalSize, PhysicalPosition, Window } from '@tauri-apps/api/window';
+  import { PhysicalSize, PhysicalPosition } from '@tauri-apps/api/window';
   import { invoke } from '@tauri-apps/api/core';
   import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+  import { searchFiles, type SearchResult } from '../lib/searcher'; // Windows Searchの魔法を借りてくるよ！
+
   let searchInput: HTMLInputElement; // input要素を後でつかまえるためのおてて！
   let searchTerm: string = '';
   let message: string = '';
-  
-  // たとえばこんな検索候補を用意してみたよ！ (∩ˊ꒳​ˋ∩)･*
-  const allCandidates: string[] = [
-    "りんごジュース",
-    "みかんゼリー",
-    "いちごパフェ",
-    "バナナシェイク",
-    "ぶどう飴",
-    "ももタルト",
-    "パイナップルピザ",
-    "スイカソーダ",
-    "メロンパン",
-    "キウイヨーグルト",
-    "マンゴープリン",
-    "レモンケーキ"
-  ];
 
-  let filteredCandidates: string[] = [];
+  let searchResults: SearchResult[] = []; // 検索結果をここにしまうよ！ (<em>´ω｀</em>)
   const displayLimit = 5; // 一度に表示する候補の上限だよ！
-  let overflowMessage = ''; // 上限を超えたときに出すメッセージ！
+  let overflowMessageText = ''; // 上限を超えたときに出すメッセージ！
 
   // ウィンドウの高さ調整のための定数だよ！ (｡•̀ω-)b
   const baseHeight = 50; // 入力欄とかパディングとかの基本的な高さ！
@@ -44,39 +30,36 @@
     opacity?: number;
   }
 
-  function handleSearch() {
+  async function handleSearch() { // searchFilesちゃんは非同期だから async をつけるよ！
+    message = ''; // メッセージを一旦消しとこ！
     if (searchTerm.trim() === '') {
       message = '何か入力してね！ (｡•́︿•̀｡)';
-      filteredCandidates = [];
-      overflowMessage = '';
+      searchResults = [];
     } else {
-      // 絞り込みは下の $: でやるから、ここでは何もしなくてもOK！
+      try {
+        console.log(`Searching for: "${searchTerm}"`);
+        searchResults = await searchFiles(searchTerm); // searchFilesちゃんにお願い！
+        console.log(`Found ${searchResults.length} results.`);
+        if (searchResults.length === 0) {
+          message = `「${searchTerm}」は見つからなかったよ… (´・ω・｀)`;
+        }
+      } catch (error) {
+        console.error('Search failed:', error);
+        message = `検索中にエラーが起きちゃった… (´；ω；｀) ${error}`;
+        searchResults = [];
+      }
+    }
+    // 検索結果の数に応じてオーバーフローメッセージを更新するよ！
+    if (searchResults.length > displayLimit) {
+      overflowMessageText = `他にも ${searchResults.length - displayLimit} 件あるよ！ もっと絞り込んでね！ (ゝ∀･)⌒☆`;
+    } else {
+      overflowMessageText = '';
     }
   }
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Enter') {
       handleSearch();
-    }
-  }
-
-  // searchTerm が変わるたびに、候補を絞り込むよ！ (๑•̀ㅁ•́๑)✧
-  $: {
-    if (searchTerm.trim() === '') {
-      filteredCandidates = [];
-      overflowMessage = '';
-    } else {
-      message = ''; // 何か入力し始めたら、前のメッセージは消すよ！ (ゝω・)v
-      const lowerSearchTerm = searchTerm.toLowerCase();
-      const results = allCandidates.filter(candidate =>
-        candidate.toLowerCase().includes(lowerSearchTerm)
-      );
-      filteredCandidates = results.slice(0, displayLimit);
-      if (results.length > displayLimit) {
-        overflowMessage = `他にも ${results.length - displayLimit} 件あるよ！ もっと絞り込んでね！ (ゝ∀･)⌒☆`;
-      } else {
-        overflowMessage = '';
-      }
     }
   }
 
@@ -183,18 +166,18 @@
   $: {
     let newHeight = baseHeight;
     // 「見つからなかった…」メッセージが表示されるかどうかのチェック！ (｡•̀ω-)b
-    const noResultsMessageVisible = searchTerm.trim() !== '' && filteredCandidates.length === 0 && !message;
+    const noResultsMessageVisible = searchTerm.trim() !== '' && searchResults.length === 0 && message.includes("見つからなかった");
 
     if (message) { // 「何か入力してね！」のメッセージ
       newHeight += messageLineHeight; // とりあえず1行分ってことにしとこ！
     }
-    if (filteredCandidates.length > 0) {
-      newHeight += filteredCandidates.length * itemHeight;
+    if (searchResults.length > 0) {
+      newHeight += Math.min(searchResults.length, displayLimit) * itemHeight; // 表示する分だけ！
     }
     if (noResultsMessageVisible) { // 「見つからなかった」メッセージも高さを計算に入れるよ！
       newHeight += messageLineHeight;
     }
-    if (overflowMessage) {
+    if (overflowMessageText) {
       newHeight += messageLineHeight;
     }
 
@@ -228,17 +211,17 @@
     <p class="message">{message}</p>
   {/if}
 
-  {#if searchTerm.trim() !== '' && filteredCandidates.length > 0}
+  {#if searchResults.length > 0}
     <ul class="results-list">
-      {#each filteredCandidates as candidate (candidate)}
-        <li>{candidate}</li>
+      {#each searchResults.slice(0, displayLimit) as result (result.path)}
+        <li title={result.path}>{result.name}</li>
       {/each}
     </ul>
-    {#if overflowMessage}
-      <p class="overflow-message">{overflowMessage}</p>
+    {#if overflowMessageText}
+      <p class="overflow-message">{overflowMessageText}</p>
     {/if}
   {/if}
-  {#if searchTerm.trim() !== '' && filteredCandidates.length === 0 && !message}
+  {#if searchTerm.trim() !== '' && searchResults.length === 0 && message.includes("見つからなかった")}
     <p class="message">「${searchTerm}」に合うもの、見つからなかった… (´・ω・｀)</p>
   {/if}
 </main>
