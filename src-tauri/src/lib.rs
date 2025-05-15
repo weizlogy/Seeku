@@ -1,10 +1,9 @@
 mod searcher;
 
 use tauri::{menu::{Menu, MenuItem}, App, AppHandle, Manager, Result, Wry};
+use tauri_plugin_log::{Target, TargetKind};
 use std::fs;
 use std::path::PathBuf;
-
-use crate::searcher::*;
 
 const SETTINGS_FILE_NAME: &str = "seeku-settings.json";
 
@@ -16,6 +15,7 @@ pub fn run() {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
             .level(log::LevelFilter::Info)
+            .targets([Target::new(TargetKind::Stdout), Target::new(TargetKind::Webview)])
             .build(),
         )?;
       }
@@ -53,7 +53,7 @@ fn create_menu(app: &mut App) -> Result<()> {
   Ok(()) // ちゃんと成功したよーって教えてあげる！
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Default, Clone)]
 struct WindowSettings {
   width: Option<u32>,
   x: Option<i32>,
@@ -70,16 +70,21 @@ fn get_settings_path(app_handle: &AppHandle<Wry>) -> Result<PathBuf> {
   Ok(path)
 }
 
-#[tauri::command]
-fn load_window_settings(app_handle: AppHandle<Wry>) -> Result<Option<WindowSettings>> {
+// この関数は内部で使うようにして、tauri::commandからは直接呼ばないようにするね！
+fn load_window_settings_internal(app_handle: &AppHandle<Wry>) -> Result<WindowSettings> {
   let path = get_settings_path(&app_handle)?;
   if path.exists() {
     let content = fs::read_to_string(path)?;
     let settings: WindowSettings = serde_json::from_str(&content)?;
-    Ok(Some(settings))
+    Ok(settings)
   } else {
-    Ok(None)
+    Ok(WindowSettings::default()) // 設定ファイルがなかったらデフォルト値を返すよ！
   }
+}
+
+#[tauri::command]
+fn load_window_settings(app_handle: AppHandle<Wry>) -> Result<WindowSettings> {
+  load_window_settings_internal(&app_handle)
 }
 
 #[tauri::command]

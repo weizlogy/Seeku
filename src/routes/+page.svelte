@@ -23,6 +23,9 @@
   let currentWindowY: number | undefined = undefined;
   let currentOpacity: number = 1.0; // ウィンドウの透明度だよ！最初はくっきり！
 
+  let settingsApplied = false; // 設定が適用されたかな？ (<em>´ω｀</em>)
+  let initialSettingsError: string | null = null; // 設定読み込みでエラーが出ちゃった？
+
   interface WindowSettings {
     width?: number;
     x?: number;
@@ -65,6 +68,61 @@
 
   // ページがぴょこって表示されたら、キー入力の準備をするよ！
   onMount(() => {
+    let unlistenResizedFn: (() => void) | undefined;
+    let unlistenMovedFn: (() => void) | undefined;
+
+    // 設定反映をawaitするためasync化
+    const applyInitialSettings = async (settings: WindowSettings | null) => {
+      const currentAppWindow = WebviewWindow.getCurrent();
+      const promises: Promise<any>[] = [];
+      if (settings) {
+        if (settings.width !== undefined) currentWindowWidth = settings.width;
+        if (settings.x !== undefined && settings.y !== undefined) {
+          currentWindowX = settings.x;
+          currentWindowY = settings.y;
+          promises.push(currentAppWindow.setPosition(new PhysicalPosition(settings.x, settings.y)));
+        }
+        if (settings.opacity !== undefined) {
+          currentOpacity = settings.opacity;
+          // setOpacityはTauri v2には存在しないため、ここではCSSで反映するのみ
+        }
+      }
+      // currentWindowWidthが未定義なら今のウィンドウ幅を取得
+      if (currentWindowWidth === undefined) {
+        promises.push(currentAppWindow.innerSize().then(size => { currentWindowWidth = size.width; }));
+      }
+      await Promise.all(promises);
+      console.log('適用する設定だよ！:', JSON.stringify(settings), `幅: ${currentWindowWidth}, X: ${currentWindowX}, Y: ${currentWindowY}, 透明度: ${currentOpacity}`);
+    };
+
+    // Rustくんから設定を読み込むよ！ (∩ˊ꒳​ˋ∩)･*
+    invoke<WindowSettings>('load_window_settings')
+      .then(async settings => {
+        console.log('やったー！設定が届いたよ！ ☆<em>:.｡. o(≧▽≦)o .｡.:</em>☆', settings);
+        await applyInitialSettings(settings);
+        initialSettingsError = null;
+      })
+      .catch(async err => {
+        console.error('うにゃ～ん、設定読み込みでエラーだって… (´；ω；｀)', err);
+        initialSettingsError = String(err); // エラーオブジェクトを文字列に変換するね！
+        await applyInitialSettings({ width: 500, opacity: 1.0 }); // 仮のデフォルト値だよ！
+      })
+      .finally(async () => {
+        settingsApplied = true;
+        // 設定反映後にウィンドウを表示するよ！
+        console.log('いよいよウィンドウを表示するよ！ settingsApplied:', settingsApplied);
+        const currentAppWindow = WebviewWindow.getCurrent();
+        await currentAppWindow.show().then(() => {
+          console.log('やったー！show() の魔法、成功したみたい！ (≧∇≦)b');
+          currentAppWindow.isVisible().then(visible => {
+            console.log('ウィンドウは見えるはず…？ isVisible:', visible);
+          });
+          currentAppWindow.setFocus();
+        }).catch(err => {
+          console.error('うにゃーん、show() の魔法でエラーが出ちゃった… (´；ω；｀)', err);
+        });
+      });
+
     const currentAppWindow = WebviewWindow.getCurrent();
     currentAppWindow.outerPosition().then(pos => {
       console.log('Initial window outer position:', pos);
@@ -100,65 +158,28 @@
       }
     };
     window.addEventListener('wheel', handleWheel, { passive: false });
-
-
-    // 呪文書を読み込んで、ウィンドウの大きさと場所をセットするよ！ (∩ˊ꒳​ˋ∩)･*
-    invoke<WindowSettings | null>('load_window_settings')
-      .then(settings => {
-        console.log('Attempting to load settings from Rust...');
-        if (settings) {
-          console.log('Loaded settings from Rust:', settings);
-          if (settings.width !== undefined) {
-            console.log(`Applying width from settings: ${settings.width}`);
-            currentWindowWidth = settings.width;
-            // 高さは今の計算結果を使うから、幅だけ設定するよ！
-            // setSizeは下の $: ブロックで呼ばれるから、ここでは currentWindowWidth の更新だけ！
-          }
-          if (settings.x !== undefined && settings.y !== undefined) {
-            console.log(`Applying position from settings: x=${settings.x}, y=${settings.y}`);
-            currentWindowX = settings.x;
-            currentWindowY = settings.y;
-            currentAppWindow.setPosition(new PhysicalPosition(settings.x, settings.y));
-          }
-          if (settings.opacity !== undefined) {
-            console.log(`Applying opacity from settings: ${settings.opacity}`);
-            currentOpacity = settings.opacity;
-          }
-        } else {
-          // 設定がなかったら、今の幅を覚えておくよ！
-          console.log('No settings found in Rust, or settings were null. Using current window properties.');
-          currentAppWindow.innerSize().then(size => {
-            currentWindowWidth = size.width;
-          });
-          currentAppWindow.outerPosition().then(pos => {
-            currentWindowX = pos.x;
-            currentWindowY = pos.y;
-          });
-        }
-      })
-      .catch(err => {
-        console.error('Failed to load window settings:', err);
-        // エラーでも、今の幅と位置を覚えておく！
-        currentAppWindow.innerSize().then(size => { currentWindowWidth = size.width; });
-        currentAppWindow.outerPosition().then(pos => { currentWindowX = pos.x; currentWindowY = pos.y; });
-      });
-
-    const unlistenResized = currentAppWindow.onResized(({ payload: size }) => {
+    
+    currentAppWindow.onResized(({ payload: size }) => {
       currentWindowWidth = size.width;
       invoke('save_window_settings', { settings: { width: currentWindowWidth, x: currentWindowX, y: currentWindowY, opacity: currentOpacity } });
+    }).then(unlistener => {
+      unlistenResizedFn = unlistener;
     });
-    const unlistenMoved = currentAppWindow.onMoved(({ payload: position }) => {
+
+    currentAppWindow.onMoved(({ payload: position }) => {
       currentWindowX = position.x;
       currentWindowY = position.y;
       invoke('save_window_settings', { settings: { width: currentWindowWidth, x: currentWindowX, y: currentWindowY, opacity: currentOpacity } });
+    }).then(unlistener => {
+      unlistenMovedFn = unlistener;
     });
 
     return () => { // コンポーネントが消えるときに、イベントリスナーもちゃんとお片付け！偉い！ (<em>´ω｀</em>)
       window.removeEventListener('keydown', handleGlobalKeyDown);
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('wheel', handleWheel);
-      unlistenResized.then(f => f());
-      unlistenMoved.then(f => f());
+      if (unlistenResizedFn) unlistenResizedFn();
+      if (unlistenMovedFn) unlistenMovedFn();
     };
   });
 
@@ -220,9 +241,6 @@
     {#if overflowMessageText}
       <p class="overflow-message">{overflowMessageText}</p>
     {/if}
-  {/if}
-  {#if searchTerm.trim() !== '' && searchResults.length === 0 && message.includes("見つからなかった")}
-    <p class="message">「${searchTerm}」に合うもの、見つからなかった… (´・ω・｀)</p>
   {/if}
 </main>
 
