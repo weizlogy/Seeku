@@ -1,5 +1,6 @@
 mod searcher;
 
+use anyhow::anyhow;
 use tauri::{menu::{Menu, MenuItem}, App, AppHandle, Manager, Result, Wry};
 use tauri_plugin_log::{Target, TargetKind};
 use std::fs;
@@ -25,7 +26,8 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       load_window_settings,
       save_window_settings,
-      search_files
+      search_files,
+      open_path
     ])
     // メニューで何かイベントがあったら…
     .on_menu_event(|app, event| {
@@ -99,4 +101,14 @@ fn save_window_settings(app_handle: AppHandle<Wry>, settings: WindowSettings) ->
 fn search_files(app_handle: AppHandle<Wry>, term: String) -> Result<Vec<searcher::SearchItem>> {
   searcher::search_with_powershell(&app_handle, &term)
     .map_err(|e_str| tauri::Error::AssetNotFound(e_str))
+}
+
+#[tauri::command]
+fn open_path(path: String) -> Result<()> {
+  use std::process::Command;
+  Command::new("cmd")
+    .args(&["/C", "start", "", &path])
+    .spawn()
+    .map_err(|e| tauri::Error::Anyhow(anyhow!(e.to_string())))?;
+  Ok(())
 }
