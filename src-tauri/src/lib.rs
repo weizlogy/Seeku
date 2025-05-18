@@ -3,6 +3,7 @@ mod searcher;
 use anyhow::anyhow;
 use tauri::{menu::{Menu, MenuItem}, App, AppHandle, Manager, Result, Wry};
 use tauri_plugin_log::{Target, TargetKind};
+use std::sync::{Arc, Mutex}; // AppStateをmanageするために追加！
 use std::fs;
 use std::path::PathBuf;
 
@@ -10,6 +11,9 @@ const SETTINGS_FILE_NAME: &str = "seeku-settings.json";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  // searcherモジュールからAppStateをuseするよ！
+  use searcher::AppState;
+  let app_state = Arc::new(Mutex::new(AppState::default()));
   tauri::Builder::default()
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -23,11 +27,14 @@ pub fn run() {
       create_menu(app)?;
       Ok(())
     })
+    .manage(app_state) // ← AppStateをTauriくんに管理してもらう！
     .invoke_handler(tauri::generate_handler![
       load_window_settings,
       save_window_settings,
-      search_files,
-      open_path
+      // search_files, // ← 古いコマンドはお役御免！
+      open_path,
+      searcher::perform_search, // 新しい検索コマンド！
+      searcher::get_search_results_slice // 新しいスライス取得コマンド！
     ])
     // メニューで何かイベントがあったら…
     .on_menu_event(|app, event| {
@@ -95,12 +102,6 @@ fn save_window_settings(app_handle: AppHandle<Wry>, settings: WindowSettings) ->
   let content = serde_json::to_string_pretty(&settings)?;
   fs::write(path, content)?;
   Ok(())
-}
-
-#[tauri::command]
-fn search_files(app_handle: AppHandle<Wry>, term: String) -> Result<Vec<searcher::SearchItem>> {
-  searcher::search_with_powershell(&app_handle, &term)
-    .map_err(|e_str| tauri::Error::AssetNotFound(e_str))
 }
 
 #[tauri::command]
