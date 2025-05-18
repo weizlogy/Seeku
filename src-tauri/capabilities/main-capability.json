@@ -11,6 +11,7 @@
     "core:window:allow-set-position",
     "core:window:allow-set-background-color",
     "core:window:allow-show",
+    "core:window:allow-set-focus",
     "core:webview:allow-set-webview-background-color",
     "core:event:default",
     "core:event:allow-listen",

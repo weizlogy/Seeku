@@ -1,17 +1,22 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { PhysicalSize, PhysicalPosition } from '@tauri-apps/api/window';
   import { invoke } from '@tauri-apps/api/core';
   import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
-  import { searchFiles, type SearchResult } from '../lib/searcher'; // Windows Searchの魔法を借りてくるよ！
+  import { searchFiles, type SearchResult } from '../lib/searcher';
+  import { List } from 'svelte-virtual'; // ←正しいimportはList！
 
   let searchInput: HTMLInputElement; // input要素を後でつかまえるためのおてて！
   let searchTerm: string = '';
   let message: string = '';
 
   let searchResults: SearchResult[] = []; // 検索結果をここにしまうよ！ (<em>´ω｀</em>)
-  const displayLimit = 5; // 一度に表示する候補の上限だよ！
+  let displayLimit: number = -1; // デフォルトは無制限！
   let overflowMessageText = ''; // 上限を超えたときに出すメッセージ！
+
+  let selectedIndex: number = -1; // -1はinput欄、0～は候補リストのインデックス！
+  let listRef: any; // Listコンポーネントの参照（型はanyでOK）
+  let listContainerElement: HTMLElement; // Listコンポーネントのコンテナ要素を保持するよ！
 
   // ウィンドウの高さ調整のための定数だよ！ (｡•̀ω-)b
   const baseHeight = 50; // 入力欄とかパディングとかの基本的な高さ！
@@ -25,12 +30,14 @@
 
   let settingsApplied = false; // 設定が適用されたかな？ (<em>´ω｀</em>)
   let initialSettingsError: string | null = null; // 設定読み込みでエラーが出ちゃった？
+  let listVisibleHeight: number = 0; // Listコンポーネントの実際の表示高さ！
 
   interface WindowSettings {
     width?: number;
     x?: number;
     y?: number;
     opacity?: number;
+    displayLimit?: number; // 追加！
   }
 
   async function handleSearch() { // searchFilesちゃんは非同期だから async をつけるよ！
@@ -53,7 +60,7 @@
       }
     }
     // 検索結果の数に応じてオーバーフローメッセージを更新するよ！
-    if (searchResults.length > displayLimit) {
+    if (displayLimit !== -1 && searchResults.length > displayLimit) {
       overflowMessageText = `他にも ${searchResults.length - displayLimit} 件あるよ！ もっと絞り込んでね！ (ゝ∀･)⌒☆`;
     } else {
       overflowMessageText = '';
@@ -61,8 +68,80 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Enter') {
+    if (searchResults.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (selectedIndex < searchResults.length - 1) { // 表示上限に関わらず、全結果を移動できるようにするよ！
+          selectedIndex++;
+        } else {
+          selectedIndex = -1; // input欄に戻る
+        }
+        focusCurrent();
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (selectedIndex === -1 && searchResults.length > 0) { // 検索結果がある場合のみ
+          selectedIndex = searchResults.length - 1; // 一番下にジャンプ！
+        } else if (selectedIndex > 0) { // 既にリスト選択中の場合
+          selectedIndex--;
+        } else { // selectedIndex が 0 のときや、検索結果がないとき
+          selectedIndex = -1; // input欄に戻る
+        }
+        focusCurrent();
+      } else if (event.key === 'Tab') {
+        if (!event.shiftKey && selectedIndex === -1 && searchResults.length > 0) {
+          event.preventDefault();
+          selectedIndex = 0;
+          focusCurrent();
+        } else if (event.shiftKey && selectedIndex === 0) {
+          event.preventDefault();
+          selectedIndex = -1;
+          focusCurrent();
+        }
+      } else if (event.key === 'Enter') {
+        if (selectedIndex >= 0 && selectedIndex < searchResults.length) { // 表示上限に関わらず、選択できるようにするよ！
+          // ここで候補を選択したときのアクションを書くよ！
+          // 例: alert(`選択: ${searchResults[selectedIndex].name}`);
+          // TODO: 実際のアクションに置き換えてね！
+        } else {
+          handleSearch();
+        }
+      }
+    } else if (event.key === 'Enter') {
       handleSearch();
+    }
+  }
+
+  function focusCurrent() {
+    if (selectedIndex === -1) {
+      searchInput?.focus();
+    } else {
+      // svelte-virtual の List は scrollTo.index だよ！
+      if (listRef && listRef.scrollTo && typeof listRef.scrollTo.index === 'function' && searchResults[selectedIndex]) {
+        listRef.scrollTo.index(selectedIndex, { behavior: 'smooth', alignment: 'auto' });
+        tick().then(() => { // SvelteのDOM更新を待つよ！
+          requestAnimationFrame(() => { // ブラウザの次の描画フレームを待つよ！
+            if (listContainerElement) { // コンテナ要素がちゃんと取れてるかな？
+              const targetElement = listContainerElement.querySelector(`div[data-index="${selectedIndex}"]`) as HTMLDivElement | null;
+              targetElement?.focus();
+              console.log('[Debug] Attempted scrollTo.index and focus for item:', selectedIndex, targetElement);
+            } else {
+              console.warn('[Debug] listContainerElement is not available when trying to focus.');
+            }
+          });
+        });
+      } else {
+        console.warn('[Debug] listRef.scrollTo.index is not available or item is missing. Falling back or logging error.');
+      }
+    }
+  }
+
+  function handleResultKeydown(event: KeyboardEvent, idx: number) {
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'Tab') {
+      handleKeydown(event);
+    } else if (event.key === 'Enter') {
+      // ここで候補を選択したときのアクションを書くよ！
+      // 例: alert(`選択: ${searchResults[idx].name}`);
+      // TODO: 実際のアクションに置き換えてね！
     }
   }
 
@@ -84,7 +163,11 @@
         }
         if (settings.opacity !== undefined) {
           currentOpacity = settings.opacity;
-          // setOpacityはTauri v2には存在しないため、ここではCSSで反映するのみ
+        }
+        if (settings.displayLimit !== undefined) {
+          displayLimit = settings.displayLimit;
+        } else {
+          displayLimit = -1;
         }
       }
       // currentWindowWidthが未定義なら今のウィンドウ幅を取得
@@ -92,7 +175,7 @@
         promises.push(currentAppWindow.innerSize().then(size => { currentWindowWidth = size.width; }));
       }
       await Promise.all(promises);
-      console.log('適用する設定だよ！:', JSON.stringify(settings), `幅: ${currentWindowWidth}, X: ${currentWindowX}, Y: ${currentWindowY}, 透明度: ${currentOpacity}`);
+      console.log('適用する設定だよ！:', JSON.stringify(settings), `幅: ${currentWindowWidth}, X: ${currentWindowX}, Y: ${currentWindowY}, 透明度: ${currentOpacity}, 表示上限: ${displayLimit}`);
     };
 
     // Rustくんから設定を読み込むよ！ (∩ˊ꒳​ˋ∩)･*
@@ -149,8 +232,8 @@
     const handleWheel = (event: WheelEvent) => {
       if (event.ctrlKey) {
         event.preventDefault(); // ページがスクロールしちゃうのを防ぐ！えらい！
-        const delta = event.deltaY > 0 ? -0.05 : 0.05; // ホイールの向きで変えるよ！
-        let newOpacity = Math.max(0.1, Math.min(1.0, currentOpacity + delta)); // 0.1～1.0の間にする！
+        const deltaY = event.deltaY > 0 ? -0.05 : 0.05; // ホイールの向きで変えるよ！
+        let newOpacity = Math.max(0.1, Math.min(1.0, currentOpacity + deltaY)); // 0.1～1.0の間にする！
         newOpacity = parseFloat(newOpacity.toFixed(2)); // 小数点以下2桁にしとこ！
         currentOpacity = newOpacity;
         console.log(`currentOpacity updated to: ${currentOpacity}, saving...`);
@@ -185,35 +268,56 @@
 
   // 表示内容が変わったら、ウィンドウの高さを調整するよ！ (∩ˊ꒳​ˋ∩)･*
   $: {
-    let newHeight = baseHeight;
+    let currentTotalHeight = baseHeight; // まずは基本の高さからスタート！
     // 「見つからなかった…」メッセージが表示されるかどうかのチェック！ (｡•̀ω-)b
     const noResultsMessageVisible = searchTerm.trim() !== '' && searchResults.length === 0 && message.includes("見つからなかった");
 
+    let actualMessageHeight = 0; // メッセージエリアが実際に取る高さ！
     if (message) { // 「何か入力してね！」のメッセージ
-      newHeight += messageLineHeight; // とりあえず1行分ってことにしとこ！
+      actualMessageHeight += messageLineHeight;
     }
+    // noResultsMessageVisible のための高さは、message に「見つからなかった」が含まれるので、上の if(message) でカバーされるよ！
+
+    let itemsSectionTargetHeight = 0; // 検索結果リストが本来取りたい高さ！
     if (searchResults.length > 0) {
-      newHeight += Math.min(searchResults.length, displayLimit) * itemHeight; // 表示する分だけ！
+      itemsSectionTargetHeight = Math.min(searchResults.length, displayLimit === -1 ? searchResults.length : displayLimit) * itemHeight;
+      if (overflowMessageText) { // overflowMessage はリストがあるときだけ表示されるから、その分の高さも追加！
+        actualMessageHeight += messageLineHeight;
+      }
     }
-    if (noResultsMessageVisible) { // 「見つからなかった」メッセージも高さを計算に入れるよ！
-      newHeight += messageLineHeight;
-    }
-    if (overflowMessageText) {
-      newHeight += messageLineHeight;
+    currentTotalHeight += actualMessageHeight; // メッセージの高さを加算！
+    currentTotalHeight += itemsSectionTargetHeight; // リストの高さを加算！
+
+    // ウィンドウの高さは、計算された合計か基本の高さの大きい方で、かつ上限を超えないように！
+    const finalWindowHeight = Math.min(Math.max(currentTotalHeight, baseHeight), maxHeight);
+
+    if (searchResults.length > 0) {
+      // リストが表示される場合、リスト部分が実際に使える高さを計算するよ！
+      let nonListHeight = baseHeight; // リスト以外の部分の高さ
+      if (message && !message.includes("見つからなかった")) { // 「見つからなかった」以外のメッセージ（リストと共存する可能性あり）
+        nonListHeight += messageLineHeight;
+      }
+      if (overflowMessageText) { // overflowMessageもリストと共存するね！
+        nonListHeight += messageLineHeight;
+      }
+      // リストが使えるのは、ウィンドウ全体の高さからこれらの要素を引いた残り！
+      let availableHeightForList = finalWindowHeight - nonListHeight;
+      // 実際にリストに割り当てる高さは、使える高さとリストが取りたい高さの小さい方。ただし0未満にはならないように！
+      listVisibleHeight = Math.max(0, Math.min(itemsSectionTargetHeight, availableHeightForList));
+    } else {
+      listVisibleHeight = 0; // 検索結果がなければリストの高さは0！
     }
 
-    // 上限を超えないように、でも基本の高さよりは小さくならないように！
-    newHeight = Math.min(Math.max(newHeight, baseHeight), maxHeight);
-
-    if (typeof window !== 'undefined' && currentWindowWidth !== undefined) {
-      console.log(`Reactive block triggered. currentWindowWidth: ${currentWindowWidth}, newHeight: ${newHeight}`);
+    if (typeof window !== 'undefined' && currentWindowWidth !== undefined && settingsApplied) { // settingsApplied のチェックを追加！
+      console.log(`Reactive block triggered. currentWindowWidth: ${currentWindowWidth}, finalWindowHeight: ${finalWindowHeight}, listVisibleHeight: ${listVisibleHeight}`);
       const currentAppWindow = WebviewWindow.getCurrent();
-      console.log(`Attempting to setSize: width=${currentWindowWidth}, height=${newHeight}`);
-      currentAppWindow.setSize(new PhysicalSize(currentWindowWidth, newHeight))
+      currentAppWindow.setSize(new PhysicalSize(currentWindowWidth, finalWindowHeight))
         .then(() => console.log('setSize succeeded!'))
         .catch(err => console.error('setSize failed:', err));
     }
   }
+
+  $: if (searchResults.length === 0) selectedIndex = -1;
 </script>
 
 <main style="background-color: rgba(255, 255, 255, {currentOpacity});">
@@ -233,11 +337,31 @@
   {/if}
 
   {#if searchResults.length > 0}
-    <ul class="results-list">
-      {#each searchResults.slice(0, displayLimit) as result (result.path)}
-        <li title={result.path}>{result.name}</li>
-      {/each}
-    </ul>
+    <div class="results-list">
+      <List
+        itemCount={searchResults.length}
+        itemSize={itemHeight}
+        height={listVisibleHeight}
+        bind:this={listRef}
+        bind:containerElement={listContainerElement}
+      >
+        {#snippet item({ index })}
+          <div
+            title={searchResults[index]?.path}
+            class:selected={selectedIndex === index}
+            class="results-list-item"
+            role="option"
+            aria-selected={selectedIndex === index ? 'true' : 'false'}
+            on:keydown={(e) => handleResultKeydown(e, index)}
+            on:click={() => { selectedIndex = index; /* TODO: 実際のアクション */ }}
+            data-index={index}
+            tabindex={selectedIndex === index ? 0 : -1}
+          >
+            {searchResults[index]?.name}
+          </div>
+        {/snippet}
+      </List>
+    </div>
     {#if overflowMessageText}
       <p class="overflow-message">{overflowMessageText}</p>
     {/if}
@@ -289,18 +413,24 @@
   }
   .results-list {
     list-style: none;
-    padding: 0;
-    margin: 0 0 0.5em 0;
+    padding: 2px;
     text-align: left;
-    overflow-y: hidden; /* スクロールバーも隠しちゃえ！ */
-    background-color: transparent; /* 結果リストの背景も透明に！ */
+    background-color: transparent;
   }
-  .results-list li {
+  .results-list-item {
     padding: 0.3em 0.5em;
     border-bottom: 1px solid #eee;
-    background-color: transparent; /* リストの項目も透明に！ */
+    background-color: transparent;
+    outline: none;
   }
-  .results-list li:last-child { border-bottom: none; }
+  .results-list-item:last-child { border-bottom: none; }
+  .results-list-item.selected {
+    background: #d0eaff;
+    color: #007acc;
+    font-weight: bold;
+    border-radius: 4px;
+    outline: 2px solid #007acc;
+  }
   .overflow-message {
     color: #888;
     font-size: 0.9em;
