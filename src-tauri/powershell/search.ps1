@@ -8,7 +8,7 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($f
 $escapedQuery = $query.Replace("'", "''")
 
 # SystemIndex（Windows Search）に問い合わせ
-$searchQuery = "SELECT System.ItemPathDisplay, System.FileName FROM SYSTEMINDEX WHERE System.ItemNameDisplay LIKE '%$escapedQuery%'"
+$searchQuery = "SELECT System.ItemUrl, System.ItemName FROM SYSTEMINDEX WHERE System.ItemName LIKE '%$escapedQuery%'"
 
 # COM経由で接続
 $conn = New-Object -ComObject ADODB.Connection
@@ -18,8 +18,8 @@ $rs = $conn.Execute($searchQuery)
 # 結果をJSONで出力
 $result = @()
 while (!$rs.EOF) {
-  $path = $rs.Fields.Item("System.ItemPathDisplay").Value
-  $name = $rs.Fields.Item("System.FileName").Value
+  $path = $rs.Fields.Item("System.ItemUrl").Value
+  $name = $rs.Fields.Item("System.ItemName").Value
   $result += [PSCustomObject]@{
     Path = $path
     Name = $name

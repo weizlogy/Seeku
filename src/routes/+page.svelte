@@ -671,6 +671,7 @@
       bind:value={searchTerm}
       bind:this={searchInput}
       on:keydown={handleKeydown}
+      on:focus={() => { selectedIndex = -1; }}
       placeholder="検索キーワードを入力..."
       aria-label="検索キーワード"
     />
@@ -693,6 +694,7 @@
         {#each visibleItems as item, localIndex (item.path) }
           {@const globalIndex = visibleStartIndex + localIndex}
           <div
+            aria-label={item.name}
             title={item.path}
             class:selected={selectedIndex === globalIndex}
             class="item"
@@ -704,11 +706,21 @@
             tabindex={selectedIndex === globalIndex ? 0 : -1}
             style="position: absolute; top: {globalIndex * itemHeight}px; width: 100%;"
           >
-            {item.name}
+            <!-- ファイル名とパスを縦に並べるよ！ -->
+            <span class="item-name">{item.name}</span>
+            {#if item.path !== item.name} <!-- 名前とパスが同じ場合はパスを表示しないようにしてみる？ -->
+              <span class="item-path" title={item.path}>{item.path.replace(/^file:/, '')}</span>
+            {/if}
           </div>
         {/each}
       </div>
     </div>
+    <!-- ここに件数表示を追加するよ！ -->
+    {#if selectedIndex >= 0 && totalResultsCountFromRust > 0 && visibleItems.length > 0}
+      <p class="position-info">
+        ({selectedIndex + 1} / {totalResultsCountFromRust})
+      </p>
+    {/if}
     <!-- overflowMessageText の表示条件も totalResultsCountFromRust を見るように！ -->
     {#if overflowMessageText && totalResultsCountFromRust > displayLimit}
       <p class="overflow-message">{overflowMessageText}</p>
@@ -774,23 +786,6 @@
     margin: 0.25em 0;
     background-color: transparent; /* メッセージも透明に！ */
   }
-  .results-list {
-    /* このクラス名はもう使わないので、スタイルは results-list-scroll-container に移すか、
-       results-list-scroll-container のスタイルをここに書く！ */
-    padding: 0; /* ←パディングを0にしてズレを防ぐ！ */
-    text-align: left;
-    background-color: transparent;
-    /* スクロールバーを非表示にする魔法！ ✨ */
-    /* Webkit系 (Chrome, Safariなど) */
-    &::-webkit-scrollbar {
-      display: none;
-    }
-    /* Firefox */
-    scrollbar-width: none;
-    /* IE and Edge (一応ね！) */
-    -ms-overflow-style: none;
-    /* overflow-y: auto; */ /* ← インラインスタイルで設定するようにしたよ！ */
-  }
   .results-list-scroll-container { /* 新しいスクロールコンテナ用のスタイル！ */
     list-style: none;
     padding: 0;
@@ -800,14 +795,6 @@
     scrollbar-width: none;
     -ms-overflow-style: none;
   }
-  .results-list-content {
-    /* この子自体には特別なスタイルはあまりいらないかも？
-       position: relative; はインラインで設定済み！ */
-  }
-  /* svelte-virtual を使わなくなったので、この :global はもういらないかも？ */
-  /* :global(.results-list > div) {
-    overflow: hidden !important;
-  } */
   .item:last-child { border-bottom: none; }
   .item.selected {
     outline: 2px solid var(--item-selected); /* outlineに戻すよ！ */
@@ -816,10 +803,11 @@
   .item {
     font-family: var(--font-main);
     height: 35px; /* ←itemHeightと完全一致させる！ */
-    display: flex;
-    align-items: center;
-    padding: 0 0.5em; /* 横だけパディング */
-    background-color: var(--item-bg);
+    display: flex; /* これをflexコンテナにするよ！ */
+    flex-direction: column; /* 中身を縦に並べる！ */
+    justify-content: center; /* 縦方向の中央揃え！ */
+    align-items: flex-start; /* 横方向は左揃え！ */
+    padding: 2px 0.5em; /* 上下にも少しパディング、左右はそのまま */
     color: var(--text-color);
     border-radius: 4px;
     transition: background-color 0.2s ease, transform 0.1s ease;
@@ -827,16 +815,46 @@
     margin-left: 3px; /* 左右の余白を均等に近づける！ */
     margin-right: 3px; /* 右にも同じだけ余白を追加！ */
     box-sizing: border-box;
+    overflow: hidden; /* 中身がはみ出たら隠す！ (item-pathのellipsisのため) */
+  }
+  .item-name {
+    font-size: 0.9em; /* 少しだけ小さくしてバランス調整 */
+    line-height: 1.3; /* 行間を少し詰める */
+    white-space: nowrap; /* 名前も長すぎたら省略 */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%; /* 省略表示が効くように */
+  }
+  .item-path {
+    font-size: 0.7em; /* パスはかなり小さく！ */
+    color: #777; /* 色も薄めに */
+    line-height: 1.2; /* こちらも行間詰める */
+    white-space: nowrap; /* 1行で表示してはみ出たら省略 */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%; /* 省略表示が効くように */
   }
   .item.selected {
     background-color: var(--item-selected);
     border-color: var(--border-color);
     transform: scale(1.02);
   }
+  .position-info {
+    font-size: 0.75em; /* かなり小さく！ */
+    color: #999; /* ちょっと薄めのグレーで控えめに */
+    text-align: right; /* 右寄せ！ */
+    margin: 1px 0.5em 0px 0.5em; /* 上にほんの少し、左右は他のメッセージと合わせる感じで、下はなし！ */
+    line-height: 1.2; /* 行間も詰めてコンパクトに！ */
+    padding: 0;
+    height: 1em; /* 高さを固定して、表示/非表示でガタつかないようにするおまじない！ */
+    position: absolute;
+    right: 0px;
+    bottom: 5px;
+  }
   .overflow-message {
     color: #888;
     font-size: 0.9em;
-    margin: 0.25em 0;
+    margin: 1px 0.5em 0.25em 0.5em; /* position-info との縦マージンを調整！ */
     background-color: transparent; /* はみだしメッセージも透明に！ */
   }
 </style>
