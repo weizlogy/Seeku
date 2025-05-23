@@ -25,3 +25,4 @@ tauri = { version = "2.5.1", features = ["tray-icon"] }
 tauri-plugin-log = "2.0.0-rc"
 tauri-plugin-fs = "2.2.1"
 anyhow = "1.0"
+tauri-plugin-global-shortcut = "2"

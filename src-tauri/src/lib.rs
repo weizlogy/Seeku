@@ -33,8 +33,9 @@ pub fn run() {
       save_window_settings,
       // search_files, // ← 古いコマンドはお役御免！
       open_path,
-      searcher::perform_search, // 新しい検索コマンド！
-      searcher::get_search_results_slice // 新しいスライス取得コマンド！
+      searcher::perform_search,
+      searcher::get_search_results_slice,
+      searcher::get_icon_for_path
     ])
     // メニューで何かイベントがあったら…
     .on_menu_event(|app, event| {
@@ -52,11 +53,9 @@ pub fn run() {
 }
 
 fn create_menu(app: &mut App) -> Result<()> {
-  // AppHandle を使ってメニューアイテムを作るんだ！ (｡•̀ω-)b
-  let app_handle = app.handle();
   let quit_i =
-    MenuItem::with_id(app_handle, "quit", "Quit", true, None::<&str>)?;
-  let menu = Menu::with_items(app_handle, &[&quit_i])?;
+    MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+  let menu = Menu::with_items(app, &[&quit_i])?;
 
   app.tray_by_id("seeku").unwrap().set_menu(Some(menu))?;
   Ok(()) // ちゃんと成功したよーって教えてあげる！

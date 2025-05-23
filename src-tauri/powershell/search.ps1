@@ -8,7 +8,7 @@ $OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($f
 $escapedQuery = $query.Replace("'", "''")
 
 # SystemIndex（Windows Search）に問い合わせ
-$searchQuery = "SELECT System.ItemUrl, System.ItemName FROM SYSTEMINDEX WHERE System.ItemName LIKE '%$escapedQuery%'"
+$searchQuery = "SELECT System.ItemUrl, System.ItemName FROM SYSTEMINDEX WHERE System.ItemName LIKE '%$escapedQuery%' ORDER BY System.ItemName"
 
 # COM経由で接続
 $conn = New-Object -ComObject ADODB.Connection

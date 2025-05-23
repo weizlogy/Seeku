@@ -3,8 +3,12 @@
   import { PhysicalSize, PhysicalPosition } from '@tauri-apps/api/window';
   import { invoke } from '@tauri-apps/api/core';
   import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+  import { listen } from '@tauri-apps/api/event'; // ← これを追加！
   // import { searchFiles, type SearchResult } from '../lib/searcher'; // ← Rust側で検索するので、このimportはもういらないかな？
   // import { List } from 'svelte-virtual'; // ← svelte-virtual とは一旦お別れ！ (´；ω；｀)ﾉｼ
+  // 作ったアイコンコンポーネントをインポートするよ！
+  import FileIcon from '$lib/icons/fileicon.svelte';
+  import FolderIcon from '$lib/icons/foldericon.svelte';
 
   let searchInput: HTMLInputElement; // input要素を後でつかまえるためのおてて！
   let searchTerm: string = '';
@@ -28,6 +32,7 @@
   interface SearchResult {
     name: string;
     path: string;
+    iconType?: 'file' | 'folder' | null; // アイコンの種類を保持するプロパティを追加！
   }
 
   // ウィンドウの高さ調整のための定数だよ！ (｡•̀ω-)b
@@ -43,10 +48,14 @@
   const INITIAL_ITEMS_TO_LOAD = 30; // 最初にRustから読み込むアイテムの数 (お好みで調整してね！)
   const RENDER_BUFFER_ITEMS = 10;   // 見えてる範囲の上下に、これくらい余分に描画しとくバッファ！
   let itemsToRenderInView = 0;      // 実際に一度に画面に描画するアイテムの数 (listVisibleHeight から計算)
+  const FOCUS_RETRY_LIMIT = 30;     // アイテムフォーカスの最大リトライ回数だよ！
+  const SCROLL_DEBOUNCE_MS = 50;    // スクロールイベントの間引き時間 (ミリ秒)！
+  const DEFAULT_WINDOW_WIDTH = 500; // 設定読み込み失敗時のデフォルトウィンドウ幅！
+  const DEFAULT_WINDOW_OPACITY = 1.0; // 設定読み込み失敗時のデフォルト透明度！
 
   let settingsApplied = false; // 設定が適用されたかな？ (<em>´ω｀</em>)
   let initialSettingsError: string | null = null; // 設定読み込みでエラーが出ちゃった？
-  let listVisibleHeight: number = 0; // リスト表示エリアの実際の高さ！
+  let listVisibleHeight: number = 0; // リスト表示エリアの実際の高さ！ (CSSピクセル)
   
   let isLoadingMore = false; // 追加のアイテムを読み込み中かな？フラグ！
   const SCROLL_THRESHOLD_ITEMS = 5; // 残り何アイテムで見えそうになったら次を読み込むか (お好みで！)
@@ -66,6 +75,51 @@
     total_count: number;
   }
 
+  // 各アイテムのアイコンタイプを取得してセットする関数だよ！
+  async function fetchAndSetIconType(itemPath: string) { // itemオブジェクトじゃなくて、item.path を受け取るように変更！
+    // まず、今の visibleItems の中に、このパスのアイテムがいるか探すよ！
+    const currentItem = visibleItems.find(i => i.path === itemPath);
+
+    // もしアイテムが見つかって、かつ、まだ iconType がセットされてなかったら…
+    if (currentItem && currentItem.iconType === undefined) {
+      // console.log(`[fetchAndSetIconType] Called for: ${itemPath}, current iconType on found item: ${currentItem.iconType}`);
+      try {
+        // Rustの get_icon_for_path コマンドを呼び出す！
+        // パスから "file:" スキーマを取り除いてから渡すよ！
+        const cleanedPath = itemPath.replace(/^file:/, '');
+        // console.log(`[fetchAndSetIconType] Invoking get_icon_for_path with: ${cleanedPath}`);
+        const type = await invoke<string | null>('get_icon_for_path', { filePath: cleanedPath });
+        // console.log(`[fetchAndSetIconType] Received type: "${type}" for ${cleanedPath}`);
+
+        // Rustから返事が来た後、もう一回 visibleItems の中からアイテムを探すよ！
+        // (非同期処理の間に visibleItems が入れ替わってるかもしれないからね！)
+        const itemToUpdate = visibleItems.find(i => i.path === itemPath);
+        if (itemToUpdate) {
+          if (type === 'file' || type === 'folder') {
+            itemToUpdate.iconType = type;
+          } else {
+            itemToUpdate.iconType = null; // 予期せぬ値やエラーの場合はnullにしとこ
+          }
+          // console.log(`[fetchAndSetIconType] Set iconType to: ${itemToUpdate.iconType} for ${itemToUpdate.path}`);
+          // Svelteに「visibleItemsの中身が変わったよ！」って気づいてもらうために、配列を再代入するおまじない！
+          visibleItems = [...visibleItems];
+        } else {
+          // console.log(`[fetchAndSetIconType] Item ${itemPath} は非同期処理の間に見えなくなっちゃったみたい。`);
+        }
+      } catch (error) {
+        console.warn(`アイコンタイプの取得に失敗しちゃった (path: ${itemPath}):`, error);
+        const itemToUpdateOnError = visibleItems.find(i => i.path === itemPath);
+        if (itemToUpdateOnError) {
+          itemToUpdateOnError.iconType = null; // エラー時もnullにしとこ
+          console.log(`[fetchAndSetIconType] Set iconType to null due to error for ${itemPath}`);
+          visibleItems = [...visibleItems];
+        }
+      }
+    } else if (currentItem) {
+      // console.log(`[fetchAndSetIconType] Skipped for ${itemPath}, iconType already: ${currentItem.iconType}`);
+    }
+  }
+
   async function handleSearch() {
     message = ''; // メッセージを一旦消しとこ！
     if (searchTerm.trim() === '') {
@@ -77,7 +131,7 @@
       totalResultsCountFromRust = 0; // 総件数もリセット！
     } else {
       try {
-        console.log(`Searching for: "${searchTerm}"`);
+        // console.log(`Searching for: "${searchTerm}"`);
         isLoadingMore = true; // 最初の読み込みも「読み込み中」扱い！
         // Rustの `perform_search` コマンドを呼び出すよ！
         // itemsToRenderInView が計算されてからの方がいいけど、初回は多めに取っておく！
@@ -90,7 +144,13 @@
         visibleItems = slice.items;
         visibleStartIndex = 0; // 最初だから0番目から！
         totalResultsCountFromRust = slice.total_count; // Rustが教えてくれた総件数！
-        console.log(`Rust found ${totalResultsCountFromRust} total results. Displaying ${visibleItems.length} initial items.`);
+        // console.log(`Rust found ${totalResultsCountFromRust} total results. Displaying ${visibleItems.length} initial items.`);
+        // console.log('[handleSearch] visibleItems:', JSON.stringify(visibleItems.map(i => i.path))); // 中身も見てみる？
+        // 取得したアイテムたちのアイコンタイプも非同期で取ってくるよ！
+        for (const item of visibleItems) {
+          // console.log(`[handleSearch] Requesting iconType for: ${item.path}`);
+          fetchAndSetIconType(item.path); // itemオブジェクトじゃなくて、item.path を渡すよ！
+        }
         selectedIndex = visibleItems.length > 0 ? 0 : -1; // 結果があれば最初のアイテムを選択状態にしてみる？
         if (totalResultsCountFromRust === 0) {
           message = `「${searchTerm}」は見つからなかったよ… (´・ω・｀)`;
@@ -132,7 +192,7 @@
       return;
     }
     isLoadingMore = true;
-    console.log(`アイテムを読み込むよ！ 開始: ${startIndex}, 数: ${count}`);
+    // console.log(`アイテムを読み込むよ！ 開始: ${startIndex}, 数: ${count}`);
 
     // 実際にRustに要求する開始位置と数 (マイナスにならないように！)
     const actualStartIndex = Math.max(0, startIndex);
@@ -147,9 +207,15 @@
       if (slice.items.length > 0) {
         visibleItems = slice.items; // 新しいアイテムで置き換える！
         visibleStartIndex = actualStartIndex; // 表示開始位置も更新！
-        console.log(`${slice.items.length} 件ゲット！ 表示開始: ${visibleStartIndex}, 表示アイテム数: ${visibleItems.length}`);
+        // console.log('[fetchItems] visibleItems:', JSON.stringify(visibleItems.map(i => i.path))); // こっちも中身見てみる？
+        // 新しく読み込んだアイテムたちのアイコンタイプも非同期で取ってくるよ！
+        for (const item of visibleItems) {
+          // console.log(`[fetchItems] Requesting iconType for: ${item.path}`);
+          fetchAndSetIconType(item.path); // ここも item.path を渡すよ！
+        }
+        // console.log(`${slice.items.length} 件ゲット！ 表示開始: ${visibleStartIndex}, 表示アイテム数: ${visibleItems.length}`);
       } else {
-        console.log('指定範囲のアイテムはなかったか、もう終わりみたい！');
+        // console.log('指定範囲のアイテムはなかったか、もう終わりみたい！');
         // もし要求した範囲より手前しかアイテムがなかった場合、
         // visibleItems が空になる可能性があるので、最後の有効な範囲で再取得を試みるのもアリかも？
         // (今回はシンプルにするために省略！)
@@ -179,7 +245,7 @@
   // listVisibleHeight が変わったら、一度に描画するアイテム数を再計算！
   $: if (listVisibleHeight > 0 && itemHeight > 0) {
     itemsToRenderInView = Math.ceil(listVisibleHeight / itemHeight);
-    console.log(`リスト表示高さ: ${listVisibleHeight}px, 1アイテム高さ: ${itemHeight}px => 描画アイテム数: ${itemsToRenderInView}`);
+    // console.log(`リスト表示高さ: ${listVisibleHeight}px, 1アイテム高さ: ${itemHeight}px => 描画アイテム数: ${itemsToRenderInView}`);
     // 必要ならここで最初のアイテム群を再取得してもいいかも？
   }
 
@@ -280,7 +346,7 @@
       await focusAndScrollToSelectedItem(isTriggeredByKeyEvent); // 引数を渡す！
     } else {
       // なければ、そのアイテムを含む範囲のデータを読み込む
-      console.log(`選択アイテム ${selectedIndex} は今の表示範囲外だよ。新しい範囲を読み込むね！`);
+      // console.log(`選択アイテム ${selectedIndex} は今の表示範囲外だよ。新しい範囲を読み込むね！`);
       // selectedIndex を中心に、itemsToRenderInView + バッファ分 のデータを読み込む
 
       // 1つの表示ウィンドウで読み込むアイテムの数 (画面に見える数 + 上下バッファ)
@@ -329,8 +395,8 @@
       // console.log(`フォーカス試行: global ${selectedIndex}, local ${localIndex}, visibleStart ${visibleStartIndex}`);
       // 要素が現れるまで最大30回くらいリトライしてみるね！
       // data-index は全体のインデックス (selectedIndex) を使うようにする！
-      // 各リトライでSvelteの更新とブラウザのレンダリングを待つのがポイントだよ！
-      for (let i = 0; i < 30; i++) {
+      // 各リトライでSvelteの更新とブラウザのレンダリングを待つのがポイントだよ！ (最大 FOCUS_RETRY_LIMIT 回！)
+      for (let i = 0; i < FOCUS_RETRY_LIMIT; i++) {
         await tick();
         // requestAnimationFrame も入れて、ブラウザの描画タイミングを待つ！
         await new Promise(requestAnimationFrame);
@@ -460,6 +526,7 @@
   onMount(() => {
     let unlistenResizedFn: (() => void) | undefined;
     let unlistenMovedFn: (() => void) | undefined;
+    let unlistenToggleWindowFn: (() => void) | undefined; // ← ホットキー用リスナーの解除関数を保存する変数
 
     // 設定反映をawaitするためasync化
     const applyInitialSettings = async (settings: WindowSettings | null) => {
@@ -486,7 +553,7 @@
         promises.push(currentAppWindow.innerSize().then(size => { currentWindowWidth = size.width; }));
       }
       await Promise.all(promises);
-      console.log('適用する設定だよ！:', JSON.stringify(settings), `幅: ${currentWindowWidth}, X: ${currentWindowX}, Y: ${currentWindowY}, 透明度: ${currentOpacity}, 表示上限: ${displayLimit}`);
+      // console.log('適用する設定だよ！:', JSON.stringify(settings), `幅: ${currentWindowWidth}, X: ${currentWindowX}, Y: ${currentWindowY}, 透明度: ${currentOpacity}, 表示上限: ${displayLimit}`);
     };
 
     // Rustくんから設定を読み込むよ！ (∩ˊ꒳​ˋ∩)･*
@@ -499,30 +566,30 @@
       .catch(async err => {
         console.error('うにゃ～ん、設定読み込みでエラーだって… (´；ω；｀)', err);
         initialSettingsError = String(err); // エラーオブジェクトを文字列に変換するね！
-        await applyInitialSettings({ width: 500, opacity: 1.0 }); // 仮のデフォルト値だよ！
+        await applyInitialSettings({ width: DEFAULT_WINDOW_WIDTH, opacity: DEFAULT_WINDOW_OPACITY }); // 仮のデフォルト値だよ！
       })
       .finally(async () => {
         settingsApplied = true;
         // 設定反映後にウィンドウを表示するよ！
-        console.log('いよいよウィンドウを表示するよ！ settingsApplied:', settingsApplied);
+        // console.log('いよいよウィンドウを表示するよ！ settingsApplied:', settingsApplied);
         const currentAppWindow = WebviewWindow.getCurrent();
         await currentAppWindow.show().then(() => {
-          console.log('やったー！show() の魔法、成功したみたい！ (≧∇≦)b');
+          // console.log('やったー！show() の魔法、成功したみたい！ (≧∇≦)b');
           currentAppWindow.isVisible().then(visible => {
-            console.log('ウィンドウは見えるはず…？ isVisible:', visible);
+            // console.log('ウィンドウは見えるはず…？ isVisible:', visible);
           });
           currentAppWindow.setFocus();
         }).catch(err => {
-          console.error('うにゃーん、show() の魔法でエラーが出ちゃった… (´；ω；｀)', err);
+          // console.error('うにゃーん、show() の魔法でエラーが出ちゃった… (´；ω；｀)', err);
         });
       });
 
     const currentAppWindow = WebviewWindow.getCurrent();
     currentAppWindow.outerPosition().then(pos => {
-      console.log('Initial window outer position:', pos);
+      // console.log('Initial window outer position:', pos);
     });
     currentAppWindow.innerSize().then(size => {
-      console.log('Initial window inner size:', size);
+      // console.log('Initial window inner size:', size);
     });
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
       if (event.target !== searchInput && event.key.length === 1
@@ -547,7 +614,7 @@
         let newOpacity = Math.max(0.1, Math.min(1.0, currentOpacity + deltaY)); // 0.1～1.0の間にする！
         newOpacity = parseFloat(newOpacity.toFixed(2)); // 小数点以下2桁にしとこ！
         currentOpacity = newOpacity;
-        console.log(`currentOpacity updated to: ${currentOpacity}, saving...`);
+        // console.log(`currentOpacity updated to: ${currentOpacity}, saving...`);
         invoke('save_window_settings', { settings: { width: currentWindowWidth, x: currentWindowX, y: currentWindowY, opacity: currentOpacity } });
       }
     };
@@ -568,12 +635,32 @@
       unlistenMovedFn = unlistener;
     });
 
+    // --- ホットキーイベントのリスナーを登録！ ---
+    // Rust側から 'toggle-window' イベントが来たら、ウィンドウの表示/非表示を切り替えるよ！
+    listen<null>('toggle-window', async () => {
+      // console.log('ホットキーイベント "toggle-window" を受信したよ！');
+      const currentAppWindow = WebviewWindow.getCurrent();
+      const isVisible = await currentAppWindow.isVisible();
+      if (isVisible) {
+        await currentAppWindow.hide();
+      } else {
+        await currentAppWindow.show();
+        await currentAppWindow.setFocus(); // 表示したらフォーカスも当てる！
+        if (searchInput) {
+          searchInput.focus(); // 検索欄にもフォーカス！ (๑•̀ㅂ•́)و✧
+        }
+      }
+    }).then(unlistener => {
+      unlistenToggleWindowFn = unlistener; // 解除関数を保存！
+    });
+
     return () => { // コンポーネントが消えるときに、イベントリスナーもちゃんとお片付け！偉い！ (<em>´ω｀</em>)
       window.removeEventListener('keydown', handleGlobalKeyDown);
       window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('wheel', handleWheel);
       if (unlistenResizedFn) unlistenResizedFn();
       if (unlistenMovedFn) unlistenMovedFn();
+      if (unlistenToggleWindowFn) unlistenToggleWindowFn(); // ← 忘れずにお片付け！
     };
   });
 
@@ -602,7 +689,9 @@
     }
     if (typeof window !== 'undefined' && currentWindowWidth !== undefined && settingsApplied) {
       const currentAppWindow = WebviewWindow.getCurrent();
-      currentAppWindow.setSize(new PhysicalSize(currentWindowWidth, finalWindowHeight)).catch(() => {});
+      currentAppWindow.setSize(new PhysicalSize(currentWindowWidth, finalWindowHeight)).catch(err => {
+        console.warn('ウィンドウサイズの変更に失敗しちゃったかも… (´・ω・｀)', err);
+      });
     }
   }
 
@@ -650,9 +739,9 @@
         return;
       }
       
-      console.log(`スクロールで新しい範囲を要求するよ！ scrollTop:${scrollTop.toFixed(0)}, middleGlobalIndex:${middleVisibleGlobalIndex}, newFetchStartIndex:${newFetchStartIndex}, windowItemCount:${windowItemCount}`);
+      // console.log(`スクロールで新しい範囲を要求するよ！ scrollTop:${scrollTop.toFixed(0)}, middleGlobalIndex:${middleVisibleGlobalIndex}, newFetchStartIndex:${newFetchStartIndex}, windowItemCount:${windowItemCount}`);
       fetchItems(newFetchStartIndex, windowItemCount);
-    }, 50); // 50ミリ秒待ってから処理するよ！ (この時間はお好みで調整してね！)
+    }, SCROLL_DEBOUNCE_MS); // SCROLL_DEBOUNCE_MS ミリ秒待ってから処理するよ！
   }
 
   // itemCountはSvelteのリアクティブ変数として宣言！
@@ -706,11 +795,21 @@
             tabindex={selectedIndex === globalIndex ? 0 : -1}
             style="position: absolute; top: {globalIndex * itemHeight}px; width: 100%;"
           >
-            <!-- ファイル名とパスを縦に並べるよ！ -->
-            <span class="item-name">{item.name}</span>
-            {#if item.path !== item.name} <!-- 名前とパスが同じ場合はパスを表示しないようにしてみる？ -->
-              <span class="item-path" title={item.path}>{item.path.replace(/^file:/, '')}</span>
-            {/if}
+            <!-- アイコンを表示するエリア！ -->
+            <div class="item-icon-area">
+              <!-- <span style="font-size: 8px; color: red; position: absolute; top: 0; left: 0;">{item.iconType || 'undef'}</span> -->
+              {#if item.iconType === 'file'}
+                <FileIcon />
+              {:else if item.iconType === 'folder'}
+                <FolderIcon />
+              {/if}
+            </div>
+            <div class="item-text-area">
+              <span class="item-name">{item.name}</span>
+              {#if item.path !== item.name}
+                <span class="item-path" title={item.path}>{item.path.replace(/^file:/, '')}</span>
+              {/if}
+            </div>
           </div>
         {/each}
       </div>
@@ -801,12 +900,12 @@
     outline-offset: -2px; /* そして、アウトラインを2px内側にオフセット！これでどうだ！ ✨ */
   }
   .item {
-    font-family: var(--font-main);
+    font-family: inherit; /* 親要素のフォントを継承するよ！ */
     height: 35px; /* ←itemHeightと完全一致させる！ */
-    display: flex; /* これをflexコンテナにするよ！ */
-    flex-direction: column; /* 中身を縦に並べる！ */
-    justify-content: center; /* 縦方向の中央揃え！ */
-    align-items: flex-start; /* 横方向は左揃え！ */
+    display: flex; /* アイコンとテキストエリアを横に並べるためにflexコンテナにするよ！ */
+    flex-direction: row; /* 横並びに変更！ ✨ */
+    align-items: center; /* アイコンとテキストエリアを縦方向中央に揃える！ */
+    /* justify-content はデフォルトの flex-start でOK (左寄せ) */
     padding: 2px 0.5em; /* 上下にも少しパディング、左右はそのまま */
     color: var(--text-color);
     border-radius: 4px;
@@ -814,10 +913,11 @@
     border: 1px solid transparent;
     margin-left: 3px; /* 左右の余白を均等に近づける！ */
     margin-right: 3px; /* 右にも同じだけ余白を追加！ */
-    box-sizing: border-box;
+    box-sizing: border-box; /* パディングやボーダーも高さに含める！ */
     overflow: hidden; /* 中身がはみ出たら隠す！ (item-pathのellipsisのため) */
   }
   .item-name {
+    display: block; /* これでwidth: 100%が効きやすくなるはず！ */
     font-size: 0.9em; /* 少しだけ小さくしてバランス調整 */
     line-height: 1.3; /* 行間を少し詰める */
     white-space: nowrap; /* 名前も長すぎたら省略 */
@@ -826,6 +926,7 @@
     width: 100%; /* 省略表示が効くように */
   }
   .item-path {
+    display: block; /* これも！ */
     font-size: 0.7em; /* パスはかなり小さく！ */
     color: #777; /* 色も薄めに */
     line-height: 1.2; /* こちらも行間詰める */
@@ -833,6 +934,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     width: 100%; /* 省略表示が効くように */
+  }
+  .item-icon-area {
+    width: 20px; /* アイコン表示エリアの幅を固定 */
+    height: 100%; /* 親要素の高さに合わせる */
+    display: flex;
+    align-items: center; /* アイコンを上下中央に */
+    justify-content: center; /* アイコンを左右中央に */
+    margin-right: 5px; /* テキストとの間に少し余白 */
+    flex-shrink: 0; /* コンテナが縮んでもアイコンエリアは縮まないように！ */
+  }
+  .item-text-area {
+    flex-grow: 1; /* 残りのスペースを全部使う！ */
+    display: flex;
+    flex-direction: column; /* 名前とパスを縦に並べる */
+    justify-content: center; /* 縦方向の中央揃え */
+    overflow: hidden; /* ここでもはみ出しは隠す！ (item-name, item-path の ellipsis のため) */
   }
   .item.selected {
     background-color: var(--item-selected);

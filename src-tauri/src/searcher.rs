@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex}; // AppStateで使うから追加！
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct SearchResult {
   name: String,
-  path: String,
+  path: String, // アイコン情報はここから削除！
 }
 
 // アプリケーション全体で共有する状態だよ！
@@ -84,10 +84,9 @@ fn search_with_powershell_internal(app_handle: &AppHandle<Wry>, query: &str) -> 
     };
     
     let results = parsed_values.iter().filter_map(|item_value| {
-      // ここも SearchResult に変更！
       Some(SearchResult {
         name: item_value.get("Name")?.as_str()?.to_string(),
-        path: item_value.get("Path")?.as_str()?.to_string()
+        path: item_value.get("Path")?.as_str()?.to_string(),
       })
     }).collect();
     Ok(results)
@@ -139,3 +138,34 @@ pub async fn get_search_results_slice(
     let items_slice = if start_index >= app_state.total_results_count { Vec::new() } else { app_state.search_results[start_index..end_index].to_vec() };
     Ok(SearchResultSlice { items: items_slice, total_count: app_state.total_results_count })
 }
+
+// --- ここからが新しい Tauri コマンドだよ！ ---
+
+// 指定されたパスがファイルかフォルダかを示す文字列を返すよ！
+// 例: "file", "folder"
+#[tauri::command]
+pub async fn get_icon_for_path(file_path: String) -> Result<Option<String>, String> {
+  use std::fs;
+  use std::path::Path;
+
+  let path = Path::new(&file_path);
+  match fs::metadata(path) {
+    Ok(metadata) => {
+      if metadata.is_dir() {
+        Ok(Some("folder".to_string()))
+      } else if metadata.is_file() {
+        Ok(Some("file".to_string()))
+      } else {
+        // シンボリックリンクとか、他の種類の場合はとりあえずNoneにしとく？
+        // log::info!("Path is neither a file nor a directory: {}", file_path);
+        Ok(None) // または Ok(Some("unknown".to_string())) とかでも良いかも！
+      }
+    }
+    Err(e) => {
+      // パスが存在しないとか、アクセス権がないとかの場合だね
+      log::warn!("Failed to get metadata for path {}: {}", file_path, e);
+      Err(format!("Failed to get metadata for path {}: {}", file_path, e))
+    }
+  }
+}
+// --- ここまでが新しい Tauri コマンドだよ！ ---
