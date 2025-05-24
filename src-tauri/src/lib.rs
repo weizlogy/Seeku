@@ -1,7 +1,8 @@
 mod searcher;
 
 use anyhow::anyhow;
-use tauri::{menu::{Menu, MenuItem}, App, AppHandle, Manager, Result, Wry};
+use tauri::{menu::{Menu, MenuItem}, App, AppHandle, Emitter, Manager, Result, Wry}; use tauri_plugin_global_shortcut::{ShortcutState};
+// GlobalShortcutManager を追加したよ！
 use tauri_plugin_log::{Target, TargetKind};
 use std::sync::{Arc, Mutex}; // AppStateをmanageするために追加！
 use std::fs;
@@ -33,6 +34,7 @@ pub fn run() {
       save_window_settings,
       // search_files, // ← 古いコマンドはお役御免！
       open_path,
+      open_path_as_admin,
       searcher::perform_search,
       searcher::get_search_results_slice,
       searcher::get_icon_for_path
@@ -48,6 +50,16 @@ pub fn run() {
       }
     })
     .plugin(tauri_plugin_fs::init())
+    .plugin(
+      tauri_plugin_global_shortcut::Builder::new()
+          .with_shortcuts(["ctrl+alt+space"]).unwrap()
+          .with_handler(|app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+              let _ = app.emit("toggle-window", "triggered");
+            }
+          })
+          .build()
+    )
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
@@ -110,5 +122,18 @@ fn open_path(path: String) -> Result<()> {
     .args(&["/C", "start", "", &path])
     .spawn()
     .map_err(|e| tauri::Error::Anyhow(anyhow!(e.to_string())))?;
+  Ok(())
+}
+
+#[tauri::command]
+fn open_path_as_admin(path: String) -> Result<()> {
+  use std::process::Command;
+  let _ = Command::new("powershell")
+    .args(&[
+      "-Command",
+      &format!("Start-Process -FilePath \"{}\" -Verb RunAs", path.replace("\"", "\\\"")) // パス中のダブルクォートをエスケープするよ！
+    ])
+    .output()
+    .map_err(|e| format!("PowerShellの実行に失敗しちゃった… (´；ω；｀): {}", e));
   Ok(())
 }

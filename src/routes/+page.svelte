@@ -302,7 +302,15 @@
       } else if (event.key === 'Enter') {
         if (selectedIndex >= 0 && selectedIndex < totalResultsCountFromRust && visibleItems.length > 0) {
           const itemToExecute = getItemByGlobalIndex(selectedIndex);
-          if (itemToExecute) executeResult(itemToExecute);
+          if (itemToExecute) {
+            if (event.ctrlKey) {
+              // Ctrl + Enter の場合は管理者権限で実行！
+              invoke('open_path_as_admin', { path: itemToExecute.path })
+                .catch(err => console.error('管理者権限での実行に失敗しちゃった… (´；ω；｀)', err));
+            } else {
+              executeResult(itemToExecute);
+            }
+          }
         } else {
           handleSearch();
         }
@@ -502,7 +510,15 @@
       const globalIdx = visibleStartIndex + idx;
       if (globalIdx >= 0 && globalIdx < totalResultsCountFromRust) {
         const itemToExecute = getItemByGlobalIndex(globalIdx);
-        if (itemToExecute) executeResult(itemToExecute);
+        if (itemToExecute) {
+          if (event.ctrlKey) {
+            // Ctrl + Enter の場合は管理者権限で実行！
+            invoke('open_path_as_admin', { path: itemToExecute.path })
+              .catch(err => console.error('管理者権限での実行に失敗しちゃった… (´；ω；｀)', err));
+          } else {
+            executeResult(itemToExecute);
+          }
+        }
       }
     }
   }
@@ -638,7 +654,7 @@
     // --- ホットキーイベントのリスナーを登録！ ---
     // Rust側から 'toggle-window' イベントが来たら、ウィンドウの表示/非表示を切り替えるよ！
     listen<null>('toggle-window', async () => {
-      // console.log('ホットキーイベント "toggle-window" を受信したよ！');
+      console.log('ホットキーイベント "toggle-window" を受信したよ！');
       const currentAppWindow = WebviewWindow.getCurrent();
       const isVisible = await currentAppWindow.isVisible();
       if (isVisible) {
