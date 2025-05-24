@@ -9,4 +9,4 @@ export const FOCUS_RETRY_LIMIT = 30;
 export const SCROLL_DEBOUNCE_MS = 50;
 export const DEFAULT_WINDOW_WIDTH = 500;
 export const DEFAULT_WINDOW_OPACITY = 1.0;
-export const SCROLL_THRESHOLD_ITEMS = 5;
+export const DEFAULT_WINDOW_BACKGROUND_COLOR = '#FFFFFF'; // ウィンドウのデフォルト背景色

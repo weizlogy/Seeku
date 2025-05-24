@@ -81,7 +81,10 @@ export function calcListAndWindowHeight({
 }) {
   let currentTotalHeight = baseHeight;
   let actualMessageHeight = 0;
-  if (message) actualMessageHeight += messageLineHeight;
+  if (message) {
+    const messageLines = message.split('\n').length; // メッセージの行数を数えるよ
+    actualMessageHeight += messageLineHeight * messageLines; // 行数分の高さを確保！
+  }
   let itemsSectionTargetHeight = 0;
   if (itemCount > 0) {
     itemsSectionTargetHeight = itemCount * itemHeight;
