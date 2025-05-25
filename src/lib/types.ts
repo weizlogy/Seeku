@@ -12,6 +12,7 @@ export interface WindowSettings {
   opacity?: number;
   displayLimit?: number;
   backgroundColor?: string; // CSSで有効な色文字列 (例: "#RRGGBB", "red")
+  maxSearchHistory?: number;
 }
 
 export interface SearchResultSlice {

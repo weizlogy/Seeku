@@ -2,7 +2,12 @@ import { PhysicalPosition } from '@tauri-apps/api/window';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { invoke } from '@tauri-apps/api/core';
 import type { WindowSettings } from './types';
-import { DEFAULT_WINDOW_OPACITY, DEFAULT_WINDOW_BACKGROUND_COLOR } from './constants'; // デフォルト値をインポート！
+import {
+  DEFAULT_WINDOW_OPACITY,
+  DEFAULT_WINDOW_BACKGROUND_COLOR,
+  DEFAULT_MAX_HISTORY_COUNT, // ← 追加！
+  SETTINGS_KEY_MAX_SEARCH_HISTORY // ← 追加！
+} from './constants'; // デフォルト値をインポート！
 
 /**
  * ウィンドウの初期設定を反映する関数
@@ -43,6 +48,11 @@ export async function applyInitialSettings(settings: WindowSettings | null, setS
   if (width === undefined) {
     promises.push(currentAppWindow.innerSize().then(size => setState('currentWindowWidth', size.width)));
   }
+
+  setState(
+    'maxHistoryCount', // ← page.svelte側の変数名に合わせる
+    settings?.[SETTINGS_KEY_MAX_SEARCH_HISTORY] ?? DEFAULT_MAX_HISTORY_COUNT
+  );
   await Promise.all(promises);
 }
 

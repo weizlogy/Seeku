@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { browser } from '$app/environment'; // ★★★ これを追加してね！ ★★★
   import { PhysicalSize, PhysicalPosition } from '@tauri-apps/api/window';
   import { invoke } from '@tauri-apps/api/core';
   import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
@@ -12,11 +13,13 @@
     INITIAL_ITEMS_TO_LOAD,
     RENDER_BUFFER_ITEMS,
     FOCUS_RETRY_LIMIT,
+    DEFAULT_MAX_HISTORY_COUNT, // ← 追加！
     DEFAULT_WINDOW_WIDTH,
     DEFAULT_WINDOW_OPACITY,
     DEFAULT_WINDOW_BACKGROUND_COLOR
   } from '$lib/constants';
   import { fetchItemsFromRust, performSearch, getIconType } from '$lib/searchLogic';
+  // SETTINGS_KEY_MAX_SEARCH_HISTORY は windowLogic 側で使うのでここでは不要
   import { applyInitialSettings, loadWindowSettings, saveWindowSettings as saveWindowSettingsToRust } from '$lib/windowLogic';
   import { createScrollHandler, calcListAndWindowHeight, calcItemCount } from '$lib/listViewLogic';
   import { handleCommand as processCommand } from '$lib/commandHandler'; // ← コマンド処理をインポート！
@@ -61,6 +64,11 @@
   let isLoadingMore = false; // 追加のアイテムを読み込み中かな？フラグ！
   let justFocusedByKeyEvent = false; // キーイベントでフォーカスした直後かな？フラグ！ ✨
 
+  // ★★★ 検索履歴関連のおててたち！ ★★★
+  let searchHistory: string[] = []; // 検索履歴を保持する配列だよ！新しいものが先頭！
+  let maxHistoryCount: number = DEFAULT_MAX_HISTORY_COUNT; // 履歴の最大保存件数！設定から読み込むよ！
+  let currentHistoryIndex: number = -1; // Ctrl+↑/↓で履歴を巡回するときのインデックス！ (-1は未選択)
+  let userInputBeforeHistoryBrowse: string | null = null; // 履歴閲覧前にユーザーが入力してた文字列を一時保存！
   /**
    * 指定された色と透明度から `rgba()` 形式のCSS文字列を生成するヘルパー関数だよ！
    * @param color CSSで有効な色文字列 (例: "red", "#FF0000", "rgb(255,0,0)")
@@ -68,22 +76,57 @@
    * @returns rgba(r, g, b, a) 形式の文字列
    */
   function getRgbaWithOpacity(color: string, opacityPercent: number): string {
-    const opacity = Math.max(0, Math.min(100, opacityPercent)) / 100;
-    // 一時的なDOM要素を使って、ブラウザに色を解釈させて "rgb(r, g, b)" 形式を取得するよ
-    const tempEl = document.createElement('div');
-    tempEl.style.color = color;
-    tempEl.style.display = 'none'; // 画面には表示しないよ
-    document.body.appendChild(tempEl);
-    const computedColor = window.getComputedStyle(tempEl).color;
-    document.body.removeChild(tempEl);
+    const alpha = Math.max(0, Math.min(100, opacityPercent)) / 100; // 0.0 - 1.0 に変換
 
-    const match = computedColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
-    if (match) {
-      return `rgba(${match[1]}, ${match[2]}, ${match[3]}, ${opacity})`;
+    if (browser) {
+      // ブラウザ環境なら、DOMを使って色を正確に解釈しようとするよ！
+      // 一時的なDOM要素を使って、ブラウザに色を解釈させて "rgb(r, g, b)" 形式を取得するよ
+      const tempEl = document.createElement('div');
+      tempEl.style.color = color;
+      tempEl.style.display = 'none'; // 画面には表示しないよ
+      document.body.appendChild(tempEl);
+      const computedColor = window.getComputedStyle(tempEl).color;
+      document.body.removeChild(tempEl);
+
+      const match = computedColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)/);
+      if (match) {
+        return `rgba(${match[1]}, ${match[2]}, ${match[3]}, ${alpha})`;
+      }
+      // DOMでの解釈に失敗した場合は、下のフォールバック処理に進むよ
     }
-    // もし色の解釈に失敗したら、デフォルトの白にフォールバックするね
-    console.warn(`色の解釈に失敗しちゃった… ("${color}")。デフォルトの白背景を使うね。`);
-    return `rgba(255, 255, 255, ${opacity})`;
+
+    // SSR環境、またはブラウザでDOM解釈に失敗した場合のフォールバック処理だよ！
+    // まずはよく使われるHEX形式 (#RRGGBB や #RGB) を直接パースしてみるね！
+    if (color.startsWith('#')) {
+      let hex = color.slice(1);
+      let r: number | undefined, g: number | undefined, b: number | undefined;
+
+      if (hex.length === 3) { // #RGB形式
+        r = parseInt(hex[0] + hex[0], 16);
+        g = parseInt(hex[1] + hex[1], 16);
+        b = parseInt(hex[2] + hex[2], 16);
+      } else if (hex.length === 6) { // #RRGGBB形式
+        r = parseInt(hex.substring(0, 2), 16);
+        g = parseInt(hex.substring(2, 4), 16);
+        b = parseInt(hex.substring(4, 6), 16);
+      }
+
+      if (r !== undefined && g !== undefined && b !== undefined && !isNaN(r) && !isNaN(g) && !isNaN(b)) {
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      }
+    }
+
+    // 次に、rgb() や rgba() 形式だったら、そこからRGB値を取り出してみるね！
+    // (もし元々alphaがあっても、新しい `alpha` で上書きするよ)
+    const rgbMatch = color.match(/^rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\)$/i);
+    if (rgbMatch) {
+      return `rgba(${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}, ${alpha})`;
+    }
+
+    // どうしても解釈できなかったら、ごめんね！デフォルトの白背景にしちゃうね。
+    const contextMessage = browser ? "クライアントサイド" : "サーバーサイド(SSR)";
+    console.warn(`${contextMessage}での色の解釈に失敗しちゃった… ("${color}")。デフォルトの白背景を使うね。`);
+    return `rgba(255, 255, 255, ${alpha})`;
   }
 
   // $: リアクティブステートメントで <main> のスタイルを動的に生成！
@@ -101,7 +144,7 @@
     await saveWindowSettingsToRust({
       opacity: newOpacityForTauri,
       backgroundColor: currentBackgroundColor, // 背景色も一緒に保存！
-      // 他の設定値も現在のものを渡す
+      maxSearchHistory: maxHistoryCount, // 履歴の最大件数も保存！
       width: currentWindowWidth, x: currentWindowX, y: currentWindowY, displayLimit
     });
   }
@@ -115,8 +158,29 @@
     await saveWindowSettingsToRust({
       backgroundColor: currentBackgroundColor,
       opacity: currentOpacity / 100, // 透明度も現在のものを0.0-1.0で渡す
+      maxSearchHistory: maxHistoryCount, // 履歴の最大件数も保存！
       width: currentWindowWidth, x: currentWindowX, y: currentWindowY, displayLimit
     });
+  }
+
+  // ★★★ 検索履歴をRustセンパイに保存してもらう関数！ ★★★
+  async function saveSearchHistoryToBackend() {
+    try {
+      await invoke('save_search_history', { history: searchHistory });
+    } catch (error) {
+      console.error('検索履歴の保存に失敗しちゃった… (´；ω；｀)', error);
+      // ここでユーザーに通知してもいいかもだけど、頻繁に呼ばれる可能性があるのでコンソールログだけに留めるね
+    }
+  }
+
+  // ★★★ 新しい検索語を履歴に追加する関数！ ★★★
+  function addSearchTermToHistory(term: string) {
+    if (!term.trim() || term.startsWith('/')) { // 空の検索語やコマンドは履歴に追加しないよ！
+      return;
+    }
+    // 新しい検索語を先頭に追加して、重複があれば古い方を消すよ
+    const newHistory = [term, ...searchHistory.filter(h => h !== term)];
+    searchHistory = newHistory.slice(0, maxHistoryCount); // 最大件数を超えないようにカット！
   }
 
  /**
@@ -154,7 +218,10 @@ async function handleSearch() {
         currentOpacity: currentOpacity, // 現在の透明度も渡す！
         setBackgroundColor: setWindowBackgroundColor, // ← 背景色変更関数を追加！
         currentBackgroundColor: currentBackgroundColor, // ← 現在の背景色も追加！
-        // displayLimit関連はコマンドから操作しないようにしたから、もう渡さないよ！ (これは前のコメントのまま)
+        // ↓ 履歴管理のための情報を渡すよ！
+        searchHistory,
+        setSearchHistory: (newHistory: string[]) => { searchHistory = newHistory; },
+        saveSearchHistory: saveSearchHistoryToBackend,
       }
     );
 
@@ -229,6 +296,11 @@ async function handleSearch() {
     for (const item of visibleItems) {
       fetchAndSetIconType(item.path);
     }
+    // ★★★ 検索が成功したら、履歴に追加して保存するよ！ ★★★
+    if (searchTerm.trim() && !searchTerm.startsWith('/')) {
+      addSearchTermToHistory(searchTerm.trim());
+      await saveSearchHistoryToBackend(); // 非同期で保存！
+    }
     // selectedIndex = visibleItems.length > 0 ? 0 : -1; 
     // ↑ 検索直後は、ユーザーが明示的に選択するまで selectedIndex は -1 (入力欄) のままにしたいので、ここでは設定しないよ！
     if (totalResultsCountFromRust === 0) {
@@ -262,6 +334,8 @@ async function handleSearch() {
   // 「入力欄にフォーカスがあるよ」って状態をはっきりさせるね！
   // これで、もう一度Enterキーを押したときに、意図せずアイテムが実行されちゃうのを防げるはず！ (๑•̀ㅂ•́)و✧
   selectedIndex = -1;
+  currentHistoryIndex = -1; // 履歴選択もリセット！
+  userInputBeforeHistoryBrowse = null; // 履歴閲覧前の入力もリセット！
   if (searchInput) { // searchInput がちゃんとあれば…
     await tick();    // DOMの更新をちょっと待ってから…
     searchInput.focus(); // 入力欄にキュピーン！とフォーカスを戻すよ！
@@ -441,6 +515,51 @@ async function fetchAndSetIconType(itemPath: string) {
         return;
       }
     }
+    // ★★★ Ctrl+↑/↓ で検索履歴を操作する処理を追加！ ★★★
+    if (event.ctrlKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && document.activeElement === searchInput) {
+      event.preventDefault(); // デフォルトの挙動（ページのスクロールとか）を止めるよ！
+      if (searchHistory.length === 0) {
+        // 履歴が空っぽなら何もしないよ
+        return;
+      }
+
+      if (currentHistoryIndex === -1) {
+        // 履歴ブラウズを開始する前に、現在の入力内容を保存しておくよ
+        userInputBeforeHistoryBrowse = searchTerm;
+      }
+
+      if (event.key === 'ArrowUp') { // Ctrl + ↑ : より新しい履歴へ（または最初/最後へ）
+        if (currentHistoryIndex === -1) { // 履歴未選択状態からなら、一番新しい履歴(index 0)へ
+          currentHistoryIndex = 0;
+        } else {
+          currentHistoryIndex = (currentHistoryIndex - 1 + searchHistory.length) % searchHistory.length;
+        }
+      } else { // Ctrl + ↓ : より古い履歴へ（または最初/最後へ）
+        if (currentHistoryIndex === -1) { // 履歴未選択状態からなら、一番古い履歴へ
+          currentHistoryIndex = searchHistory.length - 1;
+        } else {
+          currentHistoryIndex = (currentHistoryIndex + 1) % searchHistory.length;
+        }
+      }
+      searchTerm = searchHistory[currentHistoryIndex];
+      await tick(); // searchTermの変更をDOMに反映させてから…
+      if (searchInput) {
+        searchInput.select(); // 入力内容を全選択すると、次の入力で上書きしやすいね！
+      }
+      return; // 履歴操作をしたら、他のキー処理はしないよ！
+    }
+
+    // Ctrlキーが押されてない、かつ、何かしらの文字入力があったら、履歴選択モードを解除するよ！
+    // (ただし、矢印キーやEnter、Tabなどのナビゲーション系キーは除く)
+    if (!event.ctrlKey && !event.altKey && !event.metaKey && currentHistoryIndex !== -1) {
+      if (event.key.length === 1 || event.key === 'Backspace' || event.key === 'Delete') {
+        // ユーザーが新しい入力を始めたとみなす
+        currentHistoryIndex = -1;
+        // userInputBeforeHistoryBrowse は、ユーザーが履歴選択をやめて自由入力を再開した時点で
+        // もう不要なので null に戻してもいいかも。あるいは、Escキーで戻せるようにするとか？
+        // 今回はシンプルに、入力再開で履歴モード解除のみ。
+      }
+    }
     // ★★★ ここまで追加 ★★★
     const maxSelectableIndex = itemCount - 1;
 
@@ -563,6 +682,7 @@ async function fetchAndSetIconType(itemPath: string) {
       if (key === 'currentWindowY') currentWindowY = value;
       if (key === 'currentOpacity') currentOpacity = value; // 0-100で受け取る
       if (key === 'currentBackgroundColor') currentBackgroundColor = value; // 背景色も受け取る！
+      if (key === 'maxHistoryCount') maxHistoryCount = value; // ★★★ 履歴の最大件数も受け取る！ ★★★
       if (key === 'displayLimit') displayLimit = value;
     };
 
@@ -583,7 +703,7 @@ async function fetchAndSetIconType(itemPath: string) {
         console.error('うにゃ～ん、設定読み込みでエラーだって… (´；ω；｀)', err);
         initialSettingsError = String(err);
         // エラー時もデフォルト値で初期化
-        await applyInitialSettings({ width: DEFAULT_WINDOW_WIDTH, opacity: DEFAULT_WINDOW_OPACITY, displayLimit, backgroundColor: DEFAULT_WINDOW_BACKGROUND_COLOR }, setState);
+        await applyInitialSettings({ width: DEFAULT_WINDOW_WIDTH, opacity: DEFAULT_WINDOW_OPACITY, displayLimit, backgroundColor: DEFAULT_WINDOW_BACKGROUND_COLOR, maxSearchHistory: DEFAULT_MAX_HISTORY_COUNT }, setState);
         // デフォルトの透明度をウィンドウに適用 (これもAPI呼び出しはしないよ！)
         // const appWindow = WebviewWindow.getCurrent();
         // await appWindow.setOpacity(DEFAULT_WINDOW_OPACITY);
@@ -596,6 +716,15 @@ async function fetchAndSetIconType(itemPath: string) {
           currentAppWindow.setFocus();
         }).catch(() => {});
       });
+    
+    // ★★★ 検索履歴を読み込むよ！ ★★★
+    invoke<string[]>('load_search_history')
+      .then(history => {
+        searchHistory = history;
+        console.log(`検索履歴を ${history.length} 件読み込んだよ！ (o^∀^o)`);
+      })
+      .catch(err => console.error('検索履歴の読み込みに失敗しちゃった… (´；ω；｀)', err));
+
 
     const currentAppWindow = WebviewWindow.getCurrent();
     currentAppWindow.outerPosition().then(pos => {
@@ -607,6 +736,10 @@ async function fetchAndSetIconType(itemPath: string) {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
       if (event.target !== searchInput && event.key.length === 1
           && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        // グローバルなキー入力で検索欄にフォーカスが移るときは、履歴選択状態を解除
+        currentHistoryIndex = -1;
+        userInputBeforeHistoryBrowse = null;
+
         searchInput.focus(); // 検索欄に注目！(๑•̀ㅁ•́๑)✧
       }
     };
@@ -635,7 +768,7 @@ async function fetchAndSetIconType(itemPath: string) {
     currentAppWindow.onResized(async ({ payload: size }) => {
       currentWindowWidth = size.width;
       // 透明度は currentOpacity (0-100) を 100で割って0.0-1.0にして保存
-      await saveWindowSettingsToRust({ width: currentWindowWidth, x: currentWindowX, y: currentWindowY, opacity: currentOpacity / 100, displayLimit, backgroundColor: currentBackgroundColor });
+      await saveWindowSettingsToRust({ width: currentWindowWidth, x: currentWindowX, y: currentWindowY, opacity: currentOpacity / 100, displayLimit, backgroundColor: currentBackgroundColor, maxSearchHistory: maxHistoryCount });
     }).then(unlistener => {
       unlistenResizedFn = unlistener;
     });
@@ -643,7 +776,7 @@ async function fetchAndSetIconType(itemPath: string) {
     currentAppWindow.onMoved(async ({ payload: position }) => {
       currentWindowX = position.x;
       currentWindowY = position.y;
-      await saveWindowSettingsToRust({ width: currentWindowWidth, x: currentWindowX, y: currentWindowY, opacity: currentOpacity / 100, displayLimit, backgroundColor: currentBackgroundColor });
+      await saveWindowSettingsToRust({ width: currentWindowWidth, x: currentWindowX, y: currentWindowY, opacity: currentOpacity / 100, displayLimit, backgroundColor: currentBackgroundColor, maxSearchHistory: maxHistoryCount });
     }).then(unlistener => {
       unlistenMovedFn = unlistener;
     });
@@ -663,12 +796,16 @@ async function fetchAndSetIconType(itemPath: string) {
         // 表示はされてるけど、フォーカスが外れてたらフォーカスを当てるね！
         await currentAppWindow.setFocus();
         if (searchInput) {
+          currentHistoryIndex = -1; // フォーカス時に履歴選択解除
+          userInputBeforeHistoryBrowse = null;
           searchInput.focus(); // 検索欄にもフォーカス！ (๑•̀ㅂ•́)و✧
         }
       } else {
         // 非表示だったら、表示してフォーカスするよ！
         await currentAppWindow.show();
         await currentAppWindow.setFocus(); // 表示したらフォーカスも当てる！
+        currentHistoryIndex = -1; // フォーカス時に履歴選択解除
+        userInputBeforeHistoryBrowse = null;
         if (searchInput) {
           searchInput.focus(); // 検索欄にもフォーカス！ (๑•̀ㅂ•́)و✧
         }
@@ -707,7 +844,12 @@ $: itemCount = calcItemCount(totalResultsCountFromRust, displayLimit);
 $: if (visibleItems.length === 0 && totalResultsCountFromRust === 0) selectedIndex = -1;
 
 let itemsToRenderInView = 0; // 実際に一度に画面に描画するアイテムの数 (listVisibleHeight から計算)
-
+// 検索ボックスにフォーカスが当たった時は、履歴選択モードを解除するよ
+function handleSearchInputFocus() {
+  selectedIndex = -1;
+  currentHistoryIndex = -1;
+  userInputBeforeHistoryBrowse = null;
+}
 // スクロールハンドラをlistViewLogicから生成！
 const handleScroll = createScrollHandler({
   isLoadingMoreRef: () => isLoadingMore,
@@ -731,8 +873,8 @@ const handleScroll = createScrollHandler({
       type="text"
       bind:value={searchTerm}
       bind:this={searchInput}
-      on:keydown={handleKeydown}
-      on:focus={() => { selectedIndex = -1; }}
+      on:keydown={handleKeydown} 
+      on:focus={handleSearchInputFocus}
       placeholder="検索キーワードを入力..."
       aria-label="検索キーワード"
       class="{styles.input} {isLoadingMore ? styles['input-loading'] : ''}"

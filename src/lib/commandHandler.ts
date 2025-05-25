@@ -24,6 +24,8 @@ function handleHelpCommand(setMessage: (msg: string) => void): void {
     `【コマンド】\n` +
     `・/help: このヘルプを表示します。\n` +
     `・/bgcolor [色名またはHEXコード]: 背景色を変更します。(例: /bgcolor lightblue, /bgcolor #333333)\n` +
+    `・/history: 検索履歴を表示します。\n` +
+    `・/history clear: 検索履歴をすべて消去します。\n` +
     `・/opacity [0-100]: ウィンドウの透明度を設定します。\n` +
     `--------------------------------------\n` +
     `【グローバルショートカット】\n` +
@@ -108,6 +110,42 @@ function handleBackgroundColorCommand(
   }
 }
 
+// ★★★ 検索履歴コマンド用の処理関数！ ★★★
+/**
+ * 検索履歴コマンドを処理するよ！
+ * @param commandParts コマンドの引数部分の配列
+ * @param setMessage 画面にメッセージを表示するための関数
+ * @param options コマンド実行に必要なオプション
+ */
+async function handleHistoryCommand(
+  commandParts: string[],
+  setMessage: (msg: string) => void,
+  options?: {
+    searchHistory?: string[];
+    setSearchHistory?: (newHistory: string[]) => void;
+    saveSearchHistory?: () => Promise<void>;
+    // maxHistoryCount はここでは直接使わないけど、将来的に設定コマンドを作るなら渡すかも！
+  }
+): Promise<void> {
+  const { searchHistory, setSearchHistory, saveSearchHistory } = options || {};
+
+  if (!searchHistory || !setSearchHistory || !saveSearchHistory) {
+    setMessage('履歴機能がうまく動いてないみたい… (´・ω・｀)');
+    return;
+  }
+
+  if (commandParts[1]?.toLowerCase() === 'clear') {
+    setSearchHistory([]);
+    await saveSearchHistory().catch(e => console.error('履歴のクリア保存に失敗…', e));
+    setMessage('検索履歴をぜーんぶ消しちゃった！ (｀・ω・´)ゞ');
+  } else if (searchHistory.length === 0) {
+    setMessage('まだ検索履歴がないみたいだよ！これからたくさん検索してね！ ✨');
+  } else {
+    const historyText = "検索履歴だよ！ (Ctrl+↑/↓で入力欄にも出せるよ！)\n--------------------\n" + searchHistory.join('\n');
+    setMessage(historyText);
+  }
+}
+
 // コマンド名と処理関数をマッピングするオブジェクトだよ！
 // これがディスパッチテーブルってやつだね！
 const commandMap: {
@@ -119,13 +157,18 @@ const commandMap: {
       currentOpacity?: number;
       setBackgroundColor?: (color: string) => void;
       currentBackgroundColor?: string;
+      // ↓ 履歴関連のオプションも追加！
+      searchHistory?: string[];
+      setSearchHistory?: (newHistory: string[]) => void;
+      saveSearchHistory?: () => Promise<void>;
     }
-  ) => Promise<void> | void; // opacityコマンドがasyncなので、Promise<void> | void にするよ
+  ) => Promise<void> | void; // 非同期処理を含むコマンドがあるので Promise<void> | void
 } = {
   help: (parts, setMessage) => handleHelpCommand(setMessage),
   opacity: handleOpacityCommand,
   bgcolor: handleBackgroundColorCommand,
   backgroundcolor: handleBackgroundColorCommand, // エイリアスも！
+  history: handleHistoryCommand, // ★★★ 履歴コマンドを追加！ ★★★
   // 新しいコマンドはここにどんどん追加していけるよ！
   // 例: 'anotherCommand': handleAnotherCommand,
 };
@@ -139,6 +182,9 @@ const commandMap: {
  *   - `currentOpacity?`: 現在の透明度 (0-100)
  *   - `setBackgroundColor?`: 背景色を設定する関数 (CSSで有効な色文字列)
  *   - `currentBackgroundColor?`: 現在の背景色 (CSSで有効な色文字列)
+ *   - `searchHistory?`: 現在の検索履歴の配列
+ *   - `setSearchHistory?`: 検索履歴を更新する関数
+ *   - `saveSearchHistory?`: 検索履歴を永続化する関数
  */
 export async function handleCommand(
   command: string,
@@ -149,6 +195,10 @@ export async function handleCommand(
     currentOpacity?: number;
     setBackgroundColor?: (color: string) => void;
     currentBackgroundColor?: string;
+    // ↓ 履歴関連のオプションも追加！
+    searchHistory?: string[];
+    setSearchHistory?: (newHistory: string[]) => void;
+    saveSearchHistory?: () => Promise<void>;
   }
 ): Promise<void> {
   const commandParts = command.substring(1).split(' ');
