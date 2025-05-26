@@ -1,35 +1,87 @@
-# sv
+# Seeku - README
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+## 利用者向け情報
 
-## Creating a project
+### Seeku ってなに？
+Seeku は、アプリケーションの起動やファイル・フォルダの検索を高速に行うための Windows 向けユーティリティツールです。
+これにより、ファイル検索にかかる時間を短縮し、PC作業の効率向上を支援します。
 
-If you're seeing this, you've probably already done this step. Congrats!
+### 主な機能
+*   **高速なファイル・フォルダ検索**: キーワード入力により、PC内のアイテムを迅速に検索します。
+*   **アプリケーションランチャー**: 頻繁に使用するアプリケーションを素早く起動できます。
+*   **検索結果のページネーション**: 大量の検索結果も、ページ単位で見やすく表示します。
+*   **アイテム種別の判別**: 検索結果がファイルかフォルダかを識別し、表示します。
 
-```bash
-# create a new project in the current directory
-npx sv create
+### 動作環境
+*   **OS**: Windows 専用です。
+*   **必須コンポーネント**:
+    *   **Windows Search サービス**: Seeku の高速検索は Windows Search のインデックスを利用しています。このサービスが無効な場合、Seeku は正常に検索を実行できませんのでご注意ください。
+    *   WebView2 ランタイム (Tauri アプリの標準要件)
 
-# create a new project in my-app
-npx sv create my-app
-```
+### 使い方
 
-## Developing
+*   **基本的な操作**
+    *   検索したいキーワードを入力し `Enter` キーを押下することで検索が実行されます。
+    *   検索結果が表示されたら、キーボードの `↑` `↓` キーで項目間を移動できます。
+    *   `←` キーを押下すると、入力欄にフォーカスが戻ります。
+    *   `→` キーを押下すると、検索結果の最下層 (該当する場合) に移動します。
+    *   検索結果を選択した状態で `Enter` キーを押下すると、そのアイテムが実行されます。
+    *   `Ctrl + Enter` で、選択したアイテムを管理者権限で実行することも可能です。
+    *   `Ctrl + マウスホイール` で、ウィンドウの透過度を動的に変更できます。
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+*   **コマンド**
+    Seeku の検索ウィンドウで以下のコマンドを入力することで、特定の機能を利用できます。
+    *   `/help`: Seeku の使用方法を表示します。
+    *   `/bgcolor [色名またはHEXコード]`: ウィンドウの背景色を指定した色に変更します。(例: `/bgcolor red`, `/bgcolor #00FF00`)
+    *   `/history`: 検索履歴を表示します。
+    *   `/history clear`: 全ての検索履歴を消去します。
+    *   `/opacity [0-100]`: ウィンドウの透明度を 0 (完全に透明) から 100 (完全に不透明) の範囲で設定します。
 
-```bash
-pnpm tauri dev
-```
+*   **グローバルショートカットキー**
+    *   `Alt + Space`: Seeku のウィンドウの表示/非表示を切り替えます。ウィンドウが非表示の場合、表示してフォーカスをアクティブにします。
 
-## Building
+*   **トレイアイコンの操作**
+    *   タスクトレイにある Seeku のアイコンを右クリックするとメニューが表示され、「Quit」を選択することでアプリケーションを終了できます。
 
-To create a production version of your app:
+---
 
-```bash
-pnpm tauri build
-```
+## 開発者向け情報
 
-You can preview the production build with `pnpm tauri preview`.
+### 技術スタック
+*   **バックエンド**: Rust (Tauri フレームワーク)
+*   **フロントエンド**: Svelte
+*   **検索ロジック**: PowerShell (`powershell/search.ps1`) - Windows Search インデックスを利用
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+### セットアップと実行方法 (Windows 向け)
+
+1.  **必要なもの**:
+    *   Rust: https://www.rust-lang.org/tools/install
+    *   Node.js (pnpm を使用): https://nodejs.org/
+    *   Tauri 開発に必要な環境 (WebView2 ランタイム等、詳細は Tauri のドキュメントを参照)
+
+2.  **開発環境のセットアップ**:
+    ```bash
+    # 1. リポジトリをクローンする
+    # git clone <リポジトリのURL>
+    # cd <プロジェクトのディレクトリ>
+
+    # 2. 依存関係をインストール
+    pnpm install
+    ```
+
+3.  **開発モードで実行**:
+    ```bash
+    pnpm dev:tauri
+    ```
+    開発サーバーが起動し、アプリケーションが立ち上がります。ホットリロードも有効です。
+
+4.  **ビルド**:
+    ```bash
+    pnpm tauri build
+    ```
+    ビルドされたアプリケーションは `src-tauri/target/release/bundle/msi/` (インストーラー) や `src-tauri/target/release/` (実行ファイル) に生成されます。
+
+### 今後の展望・課題
+*   **Rust Native での Windows Search 実装**: 現在 PowerShell を介して行っている Windows Search へのアクセスを、将来的には Rust のネイティブコードで直接実装し、パフォーマンス向上や依存関係の削減を目指します。
+
+この README が Seeku の理解と利用の一助となれば幸いです。
