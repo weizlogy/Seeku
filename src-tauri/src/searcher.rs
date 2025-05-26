@@ -2,6 +2,8 @@ use std::process::Command;
 use tauri::{AppHandle, Manager, Wry};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex}; // AppStateで使うから追加！
+#[cfg(target_os = "windows")] // Windowsの時だけ使うおまじない！
+use std::os::windows::process::CommandExt;
 
 // Svelte側と型名を合わせるために SearchItem -> SearchResult に変更！
 // Clone と Deserialize も追加しておくと後々便利かも！
@@ -50,11 +52,17 @@ fn search_with_powershell_internal(app_handle: &AppHandle<Wry>, query: &str) -> 
         format!("PowerShellスクリプトのパスが変だよ！ Path: {:?}", ps_script)
     })?;
 
-    let output =
-      Command::new("powershell")
-        .args(&["-ExecutionPolicy", "Bypass", "-File", ps_script_str, "-query", query])
-        .output()
-        .map_err(|e| format!("PowerShellの実行に失敗しちゃった… (´；ω；｀): {}", e))?;
+    let mut command = Command::new("powershell");
+    command.args(&["-ExecutionPolicy", "Bypass", "-File", ps_script_str, "-query", query]);
+
+    // --- ここからが追加だよ！ ---
+    // Windowsだったら、コマンド実行時に新しいウィンドウを開かないようにするおまじない！
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    // --- ここまでが追加だよ！ ---
+
+    let output = command.output()
+      .map_err(|e| format!("PowerShellの実行に失敗しちゃった… (´；ω；｀): {}", e))?;
 
     if !output.status.success() {
       let stderr = String::from_utf8_lossy(&output.stderr);

@@ -691,12 +691,6 @@ async function fetchAndSetIconType(itemPath: string) {
       .then(async settings => {
         console.log('やったー！設定が届いたよ！ ☆:.｡. o(≧▽≦)o .｡.☆', settings);
         await applyInitialSettings(settings, setState);
-        // applyInitialSettings で currentOpacity (0-100) がセットされた後、
-        // 実際のウィンドウに透明度を適用するよ！
-        if (settings?.opacity !== undefined) {
-          // const appWindow = WebviewWindow.getCurrent(); // ウィンドウ全体の透明度API呼び出しはしない！
-          // await appWindow.setOpacity(settings.opacity); // これもコメントアウト！
-        }
         initialSettingsError = null;
       })
       .catch(async err => {
@@ -704,9 +698,6 @@ async function fetchAndSetIconType(itemPath: string) {
         initialSettingsError = String(err);
         // エラー時もデフォルト値で初期化
         await applyInitialSettings({ width: DEFAULT_WINDOW_WIDTH, opacity: DEFAULT_WINDOW_OPACITY, displayLimit, backgroundColor: DEFAULT_WINDOW_BACKGROUND_COLOR, maxSearchHistory: DEFAULT_MAX_HISTORY_COUNT }, setState);
-        // デフォルトの透明度をウィンドウに適用 (これもAPI呼び出しはしないよ！)
-        // const appWindow = WebviewWindow.getCurrent();
-        // await appWindow.setOpacity(DEFAULT_WINDOW_OPACITY);
       })
       .finally(async () => {
         settingsApplied = true;

@@ -6,6 +6,8 @@ use tauri::{menu::{Menu, MenuItem}, App, AppHandle, Emitter, Manager, Result, Wr
 use tauri_plugin_log::{Target, TargetKind};
 use std::sync::{Arc, Mutex}; // AppStateをmanageするために追加！
 use std::fs;
+#[cfg(target_os = "windows")] // Windowsの時だけ使うおまじない！
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 
 const SETTINGS_FILE_NAME: &str = "seeku-settings.json";
@@ -118,9 +120,15 @@ fn save_window_settings(app_handle: AppHandle<Wry>, settings: WindowSettings) ->
 #[tauri::command]
 fn open_path(path: String) -> Result<()> {
   use std::process::Command;
-  Command::new("cmd")
-    .args(&["/C", "start", "", &path])
-    .spawn()
+  let mut command = Command::new("cmd");
+  command.args(&["/C", "start", "", &path]);
+
+  // --- ここからが追加だよ！ ---
+  // Windowsだったら、コマンド実行時に新しいウィンドウを開かないようにするおまじない！
+  #[cfg(target_os = "windows")]
+  command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+  // --- ここまでが追加だよ！ ---
+  command.spawn()
     .map_err(|e| tauri::Error::Anyhow(anyhow!(e.to_string())))?;
   Ok(())
 }
@@ -128,12 +136,18 @@ fn open_path(path: String) -> Result<()> {
 #[tauri::command]
 fn open_path_as_admin(path: String) -> Result<()> {
   use std::process::Command;
-  let _ = Command::new("powershell")
-    .args(&[
+  let mut command = Command::new("powershell");
+  command.args(&[
       "-Command",
       &format!("Start-Process -FilePath \"{}\" -Verb RunAs", path.replace("\"", "\\\"")) // パス中のダブルクォートをエスケープするよ！
-    ])
-    .output()
+    ]);
+
+  // --- ここからが追加だよ！ (管理者権限実行の時も念のため！) ---
+  #[cfg(target_os = "windows")]
+  command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+  // --- ここまでが追加だよ！ ---
+
+  let _ = command.output() // .spawn() じゃなくて .output() を使ってるから、元々ウィンドウは出にくいけど、念のため！
     .map_err(|e| format!("PowerShellの実行に失敗しちゃった… (´；ω；｀): {}", e));
   Ok(())
 }
