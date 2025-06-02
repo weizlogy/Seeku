@@ -11,6 +11,7 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 
 const SETTINGS_FILE_NAME: &str = "seeku-settings.json";
+const HISTORY_FILE_NAME: &str = "seeku-history.json"; // ★★★ 履歴ファイル名を追加！ ★★★
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -39,14 +40,23 @@ pub fn run() {
       open_path_as_admin,
       searcher::perform_search,
       searcher::get_search_results_slice,
-      searcher::get_icon_for_path
+      searcher::get_icon_for_path,
+      load_search_history, // ★★★ 履歴読み込みコマンドを登録！ ★★★
+      save_search_history  // ★★★ 履歴保存コマンドを登録！ ★★★
     ])
     // メニューで何かイベントがあったら…
     .on_menu_event(|app, event| {
       // どのメニューが押されたのかな～？
+      // "main" ウィンドウがなかったら、ちょっと困っちゃうから先に言っておくね！
+      let window = app.get_webview_window("main").unwrap();
       match event.id().as_ref() {
         "quit" => {
           app.exit(0);
+        }
+        "open" => {
+          let _ = window.show();
+          let _ = window.unminimize();
+          let _ = window.set_focus();
         }
         _ => {} // 他のは今は何もしなーい
       }
@@ -67,9 +77,10 @@ pub fn run() {
 }
 
 fn create_menu(app: &mut App) -> Result<()> {
+  let open_i = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
   let quit_i =
     MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-  let menu = Menu::with_items(app, &[&quit_i])?;
+  let menu = Menu::with_items(app, &[&open_i, &quit_i])?;
 
   app.tray_by_id("seeku").unwrap().set_menu(Some(menu))?;
   Ok(()) // ちゃんと成功したよーって教えてあげる！
@@ -149,5 +160,36 @@ fn open_path_as_admin(path: String) -> Result<()> {
 
   let _ = command.output() // .spawn() じゃなくて .output() を使ってるから、元々ウィンドウは出にくいけど、念のため！
     .map_err(|e| format!("PowerShellの実行に失敗しちゃった… (´；ω；｀): {}", e));
+  Ok(())
+}
+
+// ★★★ ここから検索履歴の読み書きコマンドを追加するよ！ ★★★
+
+fn get_history_path(app_handle: &AppHandle<Wry>) -> Result<PathBuf> {
+  let mut path = app_handle.path().app_config_dir()?;
+  if !path.exists() {
+    fs::create_dir_all(&path)?;
+  }
+  path.push(HISTORY_FILE_NAME);
+  Ok(path)
+}
+
+#[tauri::command]
+fn load_search_history(app_handle: AppHandle<Wry>) -> Result<Vec<String>> {
+  let path = get_history_path(&app_handle)?;
+  if path.exists() {
+    let content = fs::read_to_string(path)?;
+    let history: Vec<String> = serde_json::from_str(&content)?;
+    Ok(history)
+  } else {
+    Ok(Vec::new()) // 履歴ファイルがなかったら空のVecを返すよ！
+  }
+}
+
+#[tauri::command]
+fn save_search_history(app_handle: AppHandle<Wry>, history: Vec<String>) -> Result<()> {
+  let path = get_history_path(&app_handle)?;
+  let content = serde_json::to_string_pretty(&history)?;
+  fs::write(path, content)?;
   Ok(())
 }

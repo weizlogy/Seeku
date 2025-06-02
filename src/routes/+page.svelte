@@ -62,6 +62,7 @@
   let listVisibleHeight: number = 0; // リスト表示エリアの実際の高さ！ (CSSピクセル)
 
   let isLoadingMore = false; // 追加のアイテムを読み込み中かな？フラグ！
+  let resultsListScrollContainerElement: HTMLElement | null = null; // ★★★ スクロールコンテナのDOM要素を保持するおてて！ ★★★
   let justFocusedByKeyEvent = false; // キーイベントでフォーカスした直後かな？フラグ！ ✨
 
   // ★★★ 検索履歴関連のおててたち！ ★★★
@@ -427,7 +428,8 @@ async function fetchAndSetIconType(itemPath: string) {
     INITIAL_ITEMS_TO_LOAD,
     FOCUS_RETRY_LIMIT,
     itemHeight,
-    setJustFocusedByKeyEvent: (v: boolean) => { justFocusedByKeyEvent = v; }
+    setJustFocusedByKeyEvent: (v: boolean) => { justFocusedByKeyEvent = v; },
+    resultsContainerElement: resultsListScrollContainerElement // ★★★ スクロールコンテナ要素を渡す！ ★★★
   });
 
   // 新しいインデックスに選択を移して、フォーカスと表示を調整するヘルパーだよ！
@@ -441,6 +443,7 @@ async function fetchAndSetIconType(itemPath: string) {
     });
     // ensureSelectedItemVisibleAndFocused の中で resetKeyEventFlag が true だから、
     // justFocusedByKeyEvent は false になってるはず！ ( *´艸｀)
+    await tick(); // ★★★ ダメ元で、DOM更新を待ってみる！ ★★★
   }
 
   async function handleKeydown(event: KeyboardEvent) {
@@ -571,6 +574,7 @@ async function fetchAndSetIconType(itemPath: string) {
         } else {
           await navigateAndFocus(-1); // 一番下からさらに下で入力欄に戻るよ
         }
+        return; // ★★★ 追加: スクロール処理をしたら、他のキー操作はしない ★★★
       } else if (event.key === 'ArrowUp') {
         event.preventDefault();
         if (selectedIndex === -1 && itemCount > 0) { // 入力欄から上で一番最後のアイテムへ
@@ -580,11 +584,13 @@ async function fetchAndSetIconType(itemPath: string) {
         } else { // アイテム0番からさらに上で入力欄に戻るよ
           await navigateAndFocus(-1);
         }
+        return; // ★★★ 追加: スクロール処理をしたら、他のキー操作はしない ★★★
       } else if (event.key === 'Tab') {
         if (!event.shiftKey && selectedIndex === -1 && itemCount > 0) { // Tabで入力欄から最初のアイテムへ
           event.preventDefault();
           await navigateAndFocus(0);
         } else if (event.shiftKey && selectedIndex === 0) { // Shift+Tabで最初のアイテムから入力欄へ
+          console.log('Shift+Tab で入力欄に戻る');
           event.preventDefault();
           await navigateAndFocus(-1);
         }
@@ -832,6 +838,19 @@ async function fetchAndSetIconType(itemPath: string) {
 // itemCountはSvelteのリアクティブ変数として宣言！
 $: itemCount = calcItemCount(totalResultsCountFromRust, displayLimit);
 
+// ★★★ ここにリアクティブな処理を追加するよ！ ★★★
+// selectedIndex が -1 (入力欄フォーカス状態) になって、
+// かつ justFocusedByKeyEvent が true (キー操作でフォーカス移動したよ！の合図) だったら、
+// searchInput (検索入力欄) にフォーカスを当てるんだ！ (๑•̀ㅂ•́)و✧
+  $: if (browser && selectedIndex === -1 && justFocusedByKeyEvent && searchInput) {
+    tick().then(() => { // DOMの更新をちょっと待ってからフォーカス！ (Svelteのお作法だね！)
+      searchInput.focus();
+      // フォーカスを当てたら、justFocusedByKeyEvent フラグは false に戻しておくね！
+      // これで、意図しないタイミングで何度もフォーカスが当たっちゃうのを防げるよ！
+      justFocusedByKeyEvent = false;
+    });
+  }
+
 $: if (visibleItems.length === 0 && totalResultsCountFromRust === 0) selectedIndex = -1;
 
 let itemsToRenderInView = 0; // 実際に一度に画面に描画するアイテムの数 (listVisibleHeight から計算)
@@ -900,6 +919,7 @@ const handleScroll = createScrollHandler({
   {#if totalResultsCountFromRust > 0 && !isHelpModeActive} <!-- ヘルプモードの時は結果リストは表示しないよ -->
     <div 
       class={styles['results-list-scroll-container']}
+      bind:this={resultsListScrollContainerElement}
       style="height: {listVisibleHeight}px; overflow-y: auto;"
       on:scroll={handleScroll}
     >

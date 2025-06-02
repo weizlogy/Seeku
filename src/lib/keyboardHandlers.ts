@@ -40,7 +40,8 @@ export async function ensureSelectedItemVisibleAndFocused({
   FOCUS_RETRY_LIMIT,
   itemHeight,
   justFocusedByKeyEvent,
-  setJustFocusedByKeyEvent
+  setJustFocusedByKeyEvent,
+  resultsContainerElement // ★★★ 引数デストラクチャリングに resultsContainerElement を追加！ ★★★
 }: {
   selectedIndex: number,
   visibleStartIndex: number,
@@ -57,7 +58,8 @@ export async function ensureSelectedItemVisibleAndFocused({
   FOCUS_RETRY_LIMIT: number,
   itemHeight: number,
   justFocusedByKeyEvent: boolean,
-  setJustFocusedByKeyEvent: (v: boolean) => void
+  setJustFocusedByKeyEvent: (v: boolean) => void,
+  resultsContainerElement: HTMLElement | null // ★★★ スクロールコンテナ要素を受け取る！ ★★★
 }) {
   await tickFn();
   if (selectedIndex === -1) {
@@ -66,7 +68,7 @@ export async function ensureSelectedItemVisibleAndFocused({
   }
   const currentItem = getItemByGlobalIndex(selectedIndex, visibleStartIndex, visibleItems);
   if (currentItem) {
-    await focusAndScrollToSelectedItem({ selectedIndex, visibleStartIndex, visibleItems, itemHeight, FOCUS_RETRY_LIMIT, RENDER_BUFFER_ITEMS, isTriggeredByKeyEvent });
+    await focusAndScrollToSelectedItem({ selectedIndex, visibleStartIndex, visibleItems, itemHeight, FOCUS_RETRY_LIMIT, RENDER_BUFFER_ITEMS, isTriggeredByKeyEvent, resultsContainer: resultsContainerElement });
   } else {
     const windowItemCount = (itemsToRenderInView > 0 ? itemsToRenderInView : INITIAL_ITEMS_TO_LOAD) + RENDER_BUFFER_ITEMS * 2;
     let newFetchStartIndex = Math.max(0, selectedIndex - Math.floor(windowItemCount / 2));
@@ -74,7 +76,7 @@ export async function ensureSelectedItemVisibleAndFocused({
     newFetchStartIndex = Math.max(0, newFetchStartIndex);
     await fetchItems(newFetchStartIndex, windowItemCount);
     await tickFn();
-    await focusAndScrollToSelectedItem({ selectedIndex, visibleStartIndex: newFetchStartIndex, visibleItems, itemHeight, FOCUS_RETRY_LIMIT, RENDER_BUFFER_ITEMS, isTriggeredByKeyEvent });
+    await focusAndScrollToSelectedItem({ selectedIndex, visibleStartIndex: newFetchStartIndex, visibleItems, itemHeight, FOCUS_RETRY_LIMIT, RENDER_BUFFER_ITEMS, isTriggeredByKeyEvent, resultsContainer: resultsContainerElement });
   }
   if (isTriggeredByKeyEvent && resetKeyEventFlag) {
     setJustFocusedByKeyEvent(false);
@@ -91,7 +93,8 @@ export async function focusAndScrollToSelectedItem({
   itemHeight,
   FOCUS_RETRY_LIMIT,
   RENDER_BUFFER_ITEMS,
-  isTriggeredByKeyEvent = false
+  isTriggeredByKeyEvent = false,
+  resultsContainer: resultsContainerFromSvelte // ★★★ Svelteから渡されたコンテナ要素を使うよ！ ★★★
 }: {
   selectedIndex: number,
   visibleStartIndex: number,
@@ -99,50 +102,57 @@ export async function focusAndScrollToSelectedItem({
   itemHeight: number,
   FOCUS_RETRY_LIMIT: number,
   RENDER_BUFFER_ITEMS: number,
-  isTriggeredByKeyEvent?: boolean
+  isTriggeredByKeyEvent?: boolean,
+  resultsContainer: HTMLElement | null // ★★★ 型定義も更新！ ★★★
 }) {
-  const resultsContainer = document.querySelector('.results-list-scroll-container') as HTMLElement | null;
+  const resultsContainer = resultsContainerFromSvelte; // ★★★ document.querySelector の代わりに引数を使う！ ★★★
   await new Promise(resolve => requestAnimationFrame(resolve));
-  if (selectedIndex === -1) return;
+  if (selectedIndex === -1) {
+    return;
+  }
   const localIndex = selectedIndex - visibleStartIndex;
-  const scrollTopBeforeFocusLogic = resultsContainer ? resultsContainer.scrollTop : 0;
+  // console.log(`[ScrollDebug]   localIndex: ${localIndex} (selectedIndex: ${selectedIndex}, visibleStartIndex: ${visibleStartIndex})`);
+  // const scrollTopBeforeFocusLogic = resultsContainer ? resultsContainer.scrollTop : 0; // 意図しないスクロールを防ぐためだったが、キー操作のスクロールを阻害する可能性があるので一旦コメントアウト
   if (resultsContainer && localIndex >= 0 && localIndex < visibleItems.length) {
+    // console.log(`[ScrollDebug]   resultsContainer IS VALID and localIndex IS IN RANGE.`);
     for (let i = 0; i < FOCUS_RETRY_LIMIT; i++) {
       await tick();
       await new Promise(requestAnimationFrame);
       const targetElement = resultsContainer.querySelector(`div[data-index="${selectedIndex}"]`) as HTMLElement | null;
       if (targetElement) {
-        targetElement.focus();
-        if (resultsContainer && resultsContainer.scrollTop !== scrollTopBeforeFocusLogic) {
-          resultsContainer.scrollTop = scrollTopBeforeFocusLogic;
-        }
+        targetElement.focus({ preventScroll: true }); // ★ ブラウザの自動スクロールを抑制！
         if (isTriggeredByKeyEvent && resultsContainer) {
-          const initialScrollTop = resultsContainer.scrollTop;
-          const containerRect = resultsContainer.getBoundingClientRect();
-          const targetRect = targetElement.getBoundingClientRect();
-          let newScrollTop = initialScrollTop;
-          const bufferPx = RENDER_BUFFER_ITEMS * itemHeight / 4;
-          if (targetRect.bottom < containerRect.top) {
-            newScrollTop = targetElement.offsetTop - bufferPx;
-          } else if (targetRect.top > containerRect.bottom) {
-            newScrollTop = (targetElement.offsetTop + itemHeight) - resultsContainer.clientHeight + bufferPx;
-          } else if (targetRect.top < containerRect.top) {
-            newScrollTop = initialScrollTop - (containerRect.top - targetRect.top);
-          } else if (targetRect.bottom > containerRect.bottom) {
-            newScrollTop = initialScrollTop + (targetRect.bottom - containerRect.bottom);
+          const scrollTop = resultsContainer.scrollTop; // 現在のスクロール位置
+          const containerHeight = resultsContainer.clientHeight; // コンテナの表示高さ
+          const itemOffsetTop = targetElement.offsetTop; // アイテムのコンテナ内でのY位置
+          const itemHeightActual = targetElement.offsetHeight; // アイテムの実際の高さ (itemHeight定数より正確かも)
+
+          const buffer = 5; // スクロールした後に、アイテムの上下に欲しい小さな余白 (ピクセル)
+
+          let newScrollTop = scrollTop; // 新しいスクロール位置の候補
+
+          // 1. アイテムがコンテナの上端より上にはみ出しているか、または上端に近すぎる場合
+          if (itemOffsetTop < scrollTop + buffer) {
+            newScrollTop = itemOffsetTop - buffer;
           }
-          const maxScroll = resultsContainer.scrollHeight - resultsContainer.clientHeight;
-          newScrollTop = Math.max(0, Math.min(newScrollTop, maxScroll < 0 ? 0 : maxScroll));
-          if (initialScrollTop.toFixed(0) !== newScrollTop.toFixed(0)) {
-            resultsContainer.scrollTop = newScrollTop;
+          // 2. アイテムがコンテナの下端より下にはみ出しているか、または下端に近すぎる場合
+          //    (else if にしないと、アイテムがコンテナより大きい場合に両方trueになってしまうかも)
+          else if (itemOffsetTop + itemHeightActual > scrollTop + containerHeight - buffer) {
+            newScrollTop = itemOffsetTop + itemHeightActual - containerHeight + buffer;
+          }
+
+          // スクロール位置を0以上に、かつ最大スクロール可能量以下に制限するよ
+          const maxScroll = resultsContainer.scrollHeight - containerHeight;
+          const finalNewScrollTop = Math.max(0, Math.min(newScrollTop, maxScroll < 0 ? 0 : maxScroll)); // maxScrollがマイナスなら0
+
+          if (Math.abs(scrollTop - finalNewScrollTop) > 0.5) { // わずかな差でも更新するように (toFixed(0)だと整数しか見ないからね)
+            resultsContainer.scrollTop = finalNewScrollTop;
           }
         }
         return;
       }
     }
-    if (resultsContainer && resultsContainer.scrollTop !== scrollTopBeforeFocusLogic) {
-      resultsContainer.scrollTop = scrollTopBeforeFocusLogic;
-    }
+  } else {
   }
 }
 
@@ -189,6 +199,8 @@ export async function handleKeydown({
         setSelectedIndex(-1);
       }
       setJustFocusedByKeyEvent(true);
+      // selectedIndex が -1 になる場合でも、ensureSelectedItemVisibleAndFocusedFn 内の tick() が
+      // Svelte側のフォーカス処理に良い影響を与えるかもしれないので、呼び出しを戻すよ！
       await ensureSelectedItemVisibleAndFocusedFn(true, true);
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
@@ -200,6 +212,7 @@ export async function handleKeydown({
         setSelectedIndex(-1);
       }
       setJustFocusedByKeyEvent(true);
+      // 上と同じ理由で、ensureSelectedItemVisibleAndFocusedFn の呼び出しを戻すよ！
       await ensureSelectedItemVisibleAndFocusedFn(true, true);
     } else if (event.key === 'Tab') {
       if (!event.shiftKey && selectedIndex === -1 && itemCount > 0) {
@@ -207,18 +220,18 @@ export async function handleKeydown({
         setSelectedIndex(0);
         setJustFocusedByKeyEvent(true);
         await ensureSelectedItemVisibleAndFocusedFn(true, true);
-      } else if (event.shiftKey && selectedIndex === 0) {
+      } else if (event.shiftKey && selectedIndex === 0) { // アイテム0でShift+Tabを押して入力欄に戻るケース
         event.preventDefault();
         setSelectedIndex(-1);
         setJustFocusedByKeyEvent(true);
-        await ensureSelectedItemVisibleAndFocusedFn(true, true);
+        await ensureSelectedItemVisibleAndFocusedFn(true, true); // Shift+Tabで入力欄に戻るときも同様に！
       }
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      if (selectedIndex !== -1) {
+      if (selectedIndex !== -1) { // アイテム選択中に左右キーで入力欄に戻るケース
         event.preventDefault();
         setSelectedIndex(-1);
         setJustFocusedByKeyEvent(true);
-        await ensureSelectedItemVisibleAndFocusedFn(true, true);
+        await ensureSelectedItemVisibleAndFocusedFn(true, true); // 左右キーで入力欄に戻るときも！
       }
     } else if (event.key === 'Enter') {
       if (selectedIndex >= 0 && selectedIndex < totalResultsCountFromRust && visibleItems.length > 0) {
@@ -272,28 +285,54 @@ export async function handleResultKeydown({
   justFocusedByKeyEvent: boolean,
   setJustFocusedByKeyEvent: (v: boolean) => void
 }) {
+  // ★★★ イベントの伝播をここでストップ！ ★★★
+  // リストアイテムでキー操作を処理したら、そのイベントが親要素に伝わって
+  // 意図しないキー処理 (例えば Page.svelte 側の handleKeydown) が
+  // 実行されちゃうのを防ぐよ！
+  // これで、selectedIndex が勝手に書き変わっちゃうのを阻止できるかも！
+  event.stopPropagation();
   const maxSelectableIndex = itemCount - 1;
-  if (event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'Tab') {
+  
+  // ArrowUp, ArrowDown, Tab のキーイベントを処理するよ
+  if (event.key === 'ArrowUp') {
+    event.preventDefault(); // まずデフォルトの動作を止める！
+    if (selectedIndex === 0) { // もし選択中のアイテムがリストの先頭だったら…
+      setSelectedIndex(-1); // 選択を解除して、入力欄にフォーカスを戻すようにするよ
+      setJustFocusedByKeyEvent(true); // キーイベントでフォーカスが変わったことを記録
+      return; // ★ selectedIndex を -1 にしたら、この関数の処理はここで終わり！Svelte側のフォーカス処理に任せるよ！
+    } else {
+      // 先頭じゃなければ、汎用的な handleKeydown に処理をお任せして、一つ上のアイテムに移動するよ
+      await handleKeydown({
+        event,
+        itemCount,
+        selectedIndex,
+        setSelectedIndex,
+        totalResultsCountFromRust,
+        visibleItems,
+        visibleStartIndex,
+        getItemByGlobalIndexFn,
+        handleSearch: () => {}, // リストアイテム上でのEnterは検索じゃないから空関数
+        executeResult,
+        ensureSelectedItemVisibleAndFocusedFn,
+        justFocusedByKeyEvent,
+        setJustFocusedByKeyEvent
+      });
+    }
+  } else if (event.key === 'ArrowDown' || event.key === 'Tab') {
+    // ArrowDown と Tab は、これまで通り handleKeydown に処理を委譲するよ
     await handleKeydown({
       event,
       itemCount,
       selectedIndex,
       setSelectedIndex,
-      totalResultsCountFromRust,
-      visibleItems,
-      visibleStartIndex,
-      getItemByGlobalIndexFn,
-      handleSearch: () => {},
-      executeResult,
-      ensureSelectedItemVisibleAndFocusedFn,
-      justFocusedByKeyEvent,
-      setJustFocusedByKeyEvent
+      // ... 他の引数も同様に渡すよ
+      totalResultsCountFromRust, visibleItems, visibleStartIndex, getItemByGlobalIndexFn, handleSearch: () => {}, executeResult, ensureSelectedItemVisibleAndFocusedFn, justFocusedByKeyEvent, setJustFocusedByKeyEvent
     });
   } else if (event.key === 'ArrowLeft') {
-    event.preventDefault();
+    event.preventDefault(); // デフォルト動作を止める
     setSelectedIndex(-1);
     setJustFocusedByKeyEvent(true);
-    await ensureSelectedItemVisibleAndFocusedFn(true, true);
+    return; // ★ selectedIndex を -1 にしたら、この関数の処理はここで終わり！Svelte側のフォーカス処理に任せるよ！
   } else if (event.key === 'ArrowRight') {
     event.preventDefault();
     if (selectedIndex !== maxSelectableIndex) {
