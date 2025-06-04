@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { get } from 'svelte/store'; // ← これを追加！
   import { browser } from '$app/environment'; // ★★★ これを追加してね！ ★★★
   import { PhysicalSize, PhysicalPosition } from '@tauri-apps/api/window';
   import { invoke } from '@tauri-apps/api/core';
@@ -21,6 +22,7 @@
   import { fetchItemsFromRust, performSearch, getIconType } from '$lib/searchLogic';
   // SETTINGS_KEY_MAX_SEARCH_HISTORY は windowLogic 側で使うのでここでは不要
   import { applyInitialSettings, loadWindowSettings, saveWindowSettings as saveWindowSettingsToRust } from '$lib/windowLogic';
+  import { setLocale as setI18nLocale, currentLocale as i18nLocaleStore, availableLocales as i18nAvailableLocales, $_ as t } from '$lib/i18n'; // ← インポート追加！
   import { createScrollHandler, calcListAndWindowHeight, calcItemCount } from '$lib/listViewLogic';
   import { handleCommand as processCommand } from '$lib/commandHandler'; // ← コマンド処理をインポート！
   import { ensureSelectedItemVisibleAndFocused, getItemByGlobalIndex } from '$lib/keyboardHandlers';
@@ -223,6 +225,9 @@ async function handleSearch() {
         searchHistory,
         setSearchHistory: (newHistory: string[]) => { searchHistory = newHistory; },
         saveSearchHistory: saveSearchHistoryToBackend,
+        setLocale: setI18nLocale, // ← 言語設定関数を渡す！
+        currentLocale: get(i18nLocaleStore), // ← 現在のロケールを渡す！ (getで値を取得)
+        availableLocales: i18nAvailableLocales, // ← 利用可能なロケールリストを渡す！
       }
     );
 

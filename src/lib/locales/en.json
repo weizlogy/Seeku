@@ -1,0 +1,42 @@
+{
+  "commands": {
+    "help": {
+      "intro": "Seeku Usage Help! (≧∇≦)ﾉ\n--------------------------------------\n[Basic Usage]\n・Type text and press Enter: Search!\n・↑ ↓ Keys: Select items!\n・Enter Key (when item selected): Open the selected item!\n・Ctrl + Enter (when item selected): Open with administrator privileges! (If supported!)\n・Esc Key: Close the window.\n--------------------------------------\n[Global Shortcut]\n・Alt + Space:\n　Toggle window visibility!\n--------------------------------------\n(More commands are planned! Stay tuned! ✨)",
+      "commandListHeader": "[Commands]",
+      "description": {
+        "help": "Show this help message.",
+        "opacity": "Set window opacity. (Specify a number from 0 to 100!)",
+        "bgcolor": "Change background color. (Example: /bgcolor lightblue, /bgcolor #333333)",
+        "history": "Show search history.\n・/history clear: Clear all search history.",
+        "lang": "Change or display the current language. Usage: /lang [language_code]"
+      }
+    },
+    "opacity": {
+      "notSupported": "Sorry, it seems opacity cannot be changed or checked in this environment... (´・ω・｀)",
+      "current": "The current window opacity is {opacity}%! (｀・ω・´)ゞ",
+      "invalidValueExample": "The opacity value seems incorrect... (ﾟｰﾟ;A\nExample: {example}",
+      "set": "Window opacity set to {opacity}%! ✨"
+    },
+    "bgcolor": {
+      "notSupported": "Sorry, it seems the background color cannot be changed in this environment... (´・ω・｀)",
+      "current": "The current background color is \"{color}\"!🎨",
+      "specifyColorExample": "Please specify a background color! Example: {example1} or {example2}",
+      "set": "Background color set to \"{color}\"!🌈"
+    },
+    "history": {
+      "error": "History function seems not to be working correctly... (´・ω・｀)",
+      "cleared": "Search history cleared completely! (｀・ω・´)ゞ",
+      "empty": "No search history yet! Search a lot from now on! ✨"
+    },
+    "lang": {
+      "notSupported": "Language switching is not supported in the current environment.",
+      "currentAndAvailable": "Current language: {current}. Available: {available}.",
+      "usageExample": "Example: {example}",
+      "set": "Language set to {lang}.",
+      "invalidLang": "Invalid language code '{lang}'.",
+      "availableList": "Available languages are: {available}.",
+      "currentUnknown": "Unknown"
+    },
+    "unknown": "I don't know a command like \"/{command}\"... (´・ω・｀)\nPlease check available commands with /help!"
+  }
+}

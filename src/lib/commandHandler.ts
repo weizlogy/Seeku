@@ -1,6 +1,8 @@
 /**
  * コマンド処理を担当するモジュールだよ！
  */
+import { $_ } from '$lib/i18n'; // ← 翻訳関数をインポート！
+import { get } from 'svelte/store'; // ← get関数をインポート！
 
 // コマンドごとの処理を関数に切り出すよ！
 // こうすることで、handleCommand関数がスッキリするし、
@@ -11,29 +13,30 @@
  * @param setMessage 画面にメッセージを表示するための関数
  */
 function handleHelpCommand(setMessage: (msg: string) => void): void {
-  setMessage(
-    `Seeku の使い方ヘルプだよ！ (≧∇≦)ﾉ\n` +
-    `--------------------------------------\n` +
-    `【基本的な使い方】\n` +
-    `・文字を入力して Enter: 検索するよ！\n` +
-    `・↑ ↓ キー: 項目を選択できるよ！\n` +
-    `・Enter キー (項目選択時): 選択したものを開くよ！\n` +
-    `・Ctrl + Enter (項目選択時): 管理者権限で開くよ！ (もし対応していればね！)\n` +
-    `・Esc キー: ウィンドウを閉じるよ。\n` +
-    `--------------------------------------\n` +
-    `【コマンド】\n` +
-    `・/help: このヘルプを表示します。\n` +
-    `・/bgcolor [色名またはHEXコード]: 背景色を変更します。(例: /bgcolor lightblue, /bgcolor #333333)\n` +
-    `・/history: 検索履歴を表示します。\n` +
-    `・/history clear: 検索履歴をすべて消去します。\n` +
-    `・/opacity [0-100]: ウィンドウの透明度を設定します。\n` +
-    `--------------------------------------\n` +
-    `【グローバルショートカット】\n` +
-    `・Alt + Space: \n` +
-    `　ウィンドウの表示/非表示を切り替えるよ！\n` +
-    `--------------------------------------\n` +
-    `（コマンドはこれからもっと増える予定！お楽しみにっ！✨）`
-  );
+  const t = get($_); // 翻訳関数を取得
+
+  // ヘルプに表示するコマンドとその説明文のキーを定義するよ！
+  // ここでフォーマットを管理するイメージ！
+  const helpCommands: Array<{ name: string; descriptionKey: string; alias?: string }> = [
+    { name: 'help', descriptionKey: 'commands.help.description.help' },
+    { name: 'opacity', descriptionKey: 'commands.help.description.opacity' },
+    { name: 'bgcolor', descriptionKey: 'commands.help.description.bgcolor', alias: 'backgroundcolor' }, // エイリアスも考慮
+    { name: 'history', descriptionKey: 'commands.help.description.history' },
+    { name: 'lang', descriptionKey: 'commands.help.description.lang' }, // ← 言語コマンドのヘルプ！
+    // 新しいコマンドを追加したらここにも追加するよ！
+  ];
+
+  // ヘルプメッセージの共通部分（基本的な使い方とか）を取得
+  let helpMessage = t('commands.help.intro') + '\n';
+  helpMessage += t('commands.help.commandListHeader') + '\n';
+  helpMessage += '--------------------------------------\n';
+
+  // 各コマンドの説明をリストに追加
+  helpCommands.forEach(cmd => {
+    helpMessage += `・/${cmd.name}: ${t(cmd.descriptionKey)}\n`;
+  });
+
+  setMessage(helpMessage);
 }
 
 /**
@@ -54,7 +57,7 @@ async function handleOpacityCommand(
 ): Promise<void> {
   const { setOpacity, currentOpacity } = options || {};
   if (!setOpacity || currentOpacity === undefined) {
-    setMessage('ごめんね、この環境では透明度を変更したり確認したりできないみたい… (´・ω・｀)');
+    setMessage(get($_)('commands.opacity.notSupported'));
     return;
   }
 
@@ -62,15 +65,13 @@ async function handleOpacityCommand(
   if (!valueArg) {
     setMessage(`現在のウィンドウの透明度は ${currentOpacity}% だよ！ (｀・ω・´)ゞ`);
   } else {
-    const value = parseInt(valueArg, 10);
+    const value = parseInt(valueArg, 10); // 数値に変換
     if (isNaN(value) || value < 0 || value > 100) {
-      setMessage(
-        `透明度の指定がおかしいみたい… (ﾟｰﾟ;A\n` +
-        `例: /opacity 80  (0から100の数字で指定してね！)`
-      );
+      setMessage(get($_)('commands.opacity.invalidValueExample', { values: { example: '/opacity 80' } }));
     } else {
+      // 透明度を設定
       await setOpacity(value);
-      setMessage(`ウィンドウの透明度を ${value}% にしたよ！ ✨`);
+      setMessage(get($_)('commands.opacity.set', { values: { opacity: value } }));
     }
   }
 }
@@ -92,7 +93,7 @@ function handleBackgroundColorCommand(
 ): void {
   const { setBackgroundColor, currentBackgroundColor } = options || {};
   if (!setBackgroundColor) {
-    setMessage('ごめんね、この環境では背景色を変更できないみたい… (´・ω・｀)');
+    setMessage(get($_)('commands.bgcolor.notSupported'));
     return;
   }
 
@@ -100,13 +101,14 @@ function handleBackgroundColorCommand(
 
   if (!colorArg) {
     if (currentBackgroundColor) {
-      setMessage(`現在の背景色は「${currentBackgroundColor}」だよ！🎨`);
+      setMessage(get($_)('commands.bgcolor.current', { values: { color: currentBackgroundColor } }));
     } else {
-      setMessage(`背景色を指定してね！ 例: /bgcolor lightblue または /bgcolor #RRGGBB`);
+      setMessage(get($_)('commands.bgcolor.specifyColorExample', { values: { example1: '/bgcolor lightblue', example2: '/bgcolor #RRGGBB' } }));
+
     }
   } else {
     setBackgroundColor(colorArg);
-    setMessage(`背景色を「${colorArg}」にしたよ！🌈`);
+    setMessage(get($_)('commands.bgcolor.set', { values: { color: colorArg } }));
   }
 }
 
@@ -130,22 +132,66 @@ async function handleHistoryCommand(
   const { searchHistory, setSearchHistory, saveSearchHistory } = options || {};
 
   if (!searchHistory || !setSearchHistory || !saveSearchHistory) {
-    setMessage('履歴機能がうまく動いてないみたい… (´・ω・｀)');
+    setMessage(get($_)('commands.history.error'));
     return;
   }
 
   if (commandParts[1]?.toLowerCase() === 'clear') {
     setSearchHistory([]);
     await saveSearchHistory().catch(e => console.error('履歴のクリア保存に失敗…', e));
-    setMessage('検索履歴をぜーんぶ消しちゃった！ (｀・ω・´)ゞ');
+    setMessage(get($_)('commands.history.cleared'));
   } else if (searchHistory.length === 0) {
-    setMessage('まだ検索履歴がないみたいだよ！これからたくさん検索してね！ ✨');
+    setMessage(get($_)('commands.history.empty'));
   } else {
     const historyText = "検索履歴だよ！ (Ctrl+↑/↓で入力欄にも出せるよ！)\n--------------------\n" + searchHistory.join('\n');
     setMessage(historyText);
   }
 }
 
+/**
+ * 言語設定コマンドを処理するよ！
+ * @param commandParts コマンドの引数部分の配列
+ * @param setMessage 画面にメッセージを表示するための関数
+ * @param options コマンド実行に必要なオプション
+ */
+function handleLangCommand(
+  commandParts: string[],
+  setMessage: (msg: string) => void,
+  options?: {
+    setLocale?: (newLocale: string) => void;
+    currentLocale?: string | null | undefined; // i18nストアの型に合わせる
+    availableLocales?: string[];
+  }
+): void {
+  const t = get($_); // 翻訳関数を取得
+  const { setLocale, currentLocale, availableLocales } = options || {};
+
+  if (!setLocale || !availableLocales) {
+    setMessage(t('commands.lang.notSupported'));
+    return;
+  }
+
+  const langArg = commandParts[1]?.toLowerCase();
+
+  if (!langArg) {
+    const currentLangDisplay = currentLocale || t('commands.lang.currentUnknown'); // nullやundefinedの場合の表示
+    const availableLangsText = availableLocales.join(', ');
+    const msg1 = t('commands.lang.currentAndAvailable', { values: { current: currentLangDisplay, available: availableLangsText } } as any);
+    const msg2 = t('commands.lang.usageExample', { values: { example: '/lang en' } } as any);
+    setMessage(
+      msg1 + `\n` + msg2
+    );
+  } else {
+    if (availableLocales.includes(langArg)) {
+      setLocale(langArg);
+      setMessage(t('commands.lang.set', { values: { lang: langArg } } as any));
+    } else {
+      setMessage(
+        t('commands.lang.invalidLang', { values: { lang: langArg } } as any) + `\n` + t('commands.lang.availableList', { values: { available: availableLocales.join(', ') } } as any)
+      );
+    }
+  }
+}
 // コマンド名と処理関数をマッピングするオブジェクトだよ！
 // これがディスパッチテーブルってやつだね！
 const commandMap: {
@@ -161,6 +207,9 @@ const commandMap: {
       searchHistory?: string[];
       setSearchHistory?: (newHistory: string[]) => void;
       saveSearchHistory?: () => Promise<void>;
+      setLocale?: (newLocale: string) => void; // ← 言語設定用
+      currentLocale?: string | null | undefined; // ← 現在の言語取得用
+      availableLocales?: string[]; // ← 利用可能な言語リスト用
     }
   ) => Promise<void> | void; // 非同期処理を含むコマンドがあるので Promise<void> | void
 } = {
@@ -169,6 +218,7 @@ const commandMap: {
   bgcolor: handleBackgroundColorCommand,
   backgroundcolor: handleBackgroundColorCommand, // エイリアスも！
   history: handleHistoryCommand, // ★★★ 履歴コマンドを追加！ ★★★
+  lang: handleLangCommand, // ← 言語コマンドを追加！
   // 新しいコマンドはここにどんどん追加していけるよ！
   // 例: 'anotherCommand': handleAnotherCommand,
 };
@@ -185,6 +235,9 @@ const commandMap: {
  *   - `searchHistory?`: 現在の検索履歴の配列
  *   - `setSearchHistory?`: 検索履歴を更新する関数
  *   - `saveSearchHistory?`: 検索履歴を永続化する関数
+ *   - `setLocale?`: 言語を設定する関数
+ *   - `currentLocale?`: 現在の言語 (例: 'en', 'ja')
+ *   - `availableLocales?`: 利用可能な言語の配列 (例: ['en', 'ja'])
  */
 export async function handleCommand(
   command: string,
@@ -199,6 +252,9 @@ export async function handleCommand(
     searchHistory?: string[];
     setSearchHistory?: (newHistory: string[]) => void;
     saveSearchHistory?: () => Promise<void>;
+    setLocale?: (newLocale: string) => void; // ← 追加！
+    currentLocale?: string | null | undefined; // ← 追加！
+    availableLocales?: string[]; // ← 追加！
   }
 ): Promise<void> {
   const commandParts = command.substring(1).split(' ');
@@ -213,6 +269,6 @@ export async function handleCommand(
     await commandFunction(commandParts, setMessage, options);
   } else {
     // 見つからなかったら、知らないコマンドだって伝えるよ
-    setMessage(`「/${actualCommand}」なんてコマンド、知らないなぁ… (´・ω・｀)\n/help で使えるコマンドを確認してみてね！`);
+    setMessage(get($_)('commands.unknown', { values: { command: actualCommand } }));
   }
 }

@@ -1,0 +1,42 @@
+{
+  "commands": {
+    "help": {
+      "intro": "Seeku の使い方ヘルプだよ！ (≧∇≦)ﾉ\n--------------------------------------\n【基本的な使い方】\n・文字を入力して Enter: 検索するよ！\n・↑ ↓ キー: 項目を選択できるよ！\n・Enter キー (項目選択時): 選択したものを開くよ！\n・Ctrl + Enter (項目選択時): 管理者権限で開くよ！ (もし対応していればね！)\n・Esc キー: ウィンドウを閉じるよ。\n--------------------------------------\n【グローバルショートカット】\n・Alt + Space: \n　ウィンドウの表示/非表示を切り替えるよ！\n--------------------------------------\n（コマンドはこれからもっと増える予定！お楽しみにっ！✨）",
+      "commandListHeader": "【コマンド】",
+      "description": {
+        "help": "このヘルプを表示します。",
+        "opacity": "ウィンドウの透明度を設定します。 (0から100の数字で指定してね！)",
+        "bgcolor": "背景色を変更します。(例: /bgcolor lightblue, /bgcolor #333333)",
+        "history": "検索履歴を表示します。\n・/history clear: 検索履歴をすべて消去します。",
+        "lang": "現在の言語を表示または変更します。使い方: /lang [言語コード]"
+      }
+    },
+    "opacity": {
+      "notSupported": "ごめんね、この環境では透明度を変更したり確認したりできないみたい… (´・ω・｀)",
+      "current": "現在のウィンドウの透明度は {opacity}% だよ！ (｀・ω・´)ゞ",
+      "invalidValueExample": "透明度の指定がおかしいみたい… (ﾟｰﾟ;A\n例: {example}",
+      "set": "ウィンドウの透明度を {opacity}% にしたよ！ ✨"
+    },
+    "bgcolor": {
+      "notSupported": "ごめんね、この環境では背景色を変更できないみたい… (´・ω・｀)",
+      "current": "現在の背景色は「{color}」だよ！🎨",
+      "specifyColorExample": "背景色を指定してね！ 例: {example1} または {example2}",
+      "set": "背景色を「{color}」にしたよ！🌈"
+    },
+    "history": {
+      "error": "履歴機能がうまく動いてないみたい… (´・ω・｀)",
+      "cleared": "検索履歴をぜーんぶ消しちゃった！ (｀・ω・´)ゞ",
+      "empty": "まだ検索履歴がないみたいだよ！これからたくさん検索してね！ ✨"
+    },
+    "lang": {
+      "notSupported": "現在の環境では言語の切り替えはサポートされていません。",
+      "currentAndAvailable": "現在の言語: {current}。利用可能な言語: {available}。",
+      "usageExample": "例: {example}",
+      "set": "言語を {lang} に設定しました。",
+      "invalidLang": "無効な言語コード '{lang}' です。",
+      "availableList": "利用可能な言語: {available}。",
+      "currentUnknown": "不明"
+    },
+    "unknown": "「/{command}」なんてコマンド、知らないなぁ… (´・ω・｀)\n/help で使えるコマンドを確認してみてね！"
+  }
+}
