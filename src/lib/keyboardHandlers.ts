@@ -155,83 +155,182 @@ export async function focusAndScrollToSelectedItem({
   } else {
   }
 }
+// ★★★ ここから新しいモード別ハンドラ関数たち！ ★★★
 
-/**
- * 検索欄・リストアイテムのkeydownハンドラ
- * Svelteの状態更新や副作用はコールバックで渡してね！
- */
-export async function handleKeydown({
-  event,
-  itemCount,
-  selectedIndex,
-  setSelectedIndex,
-  totalResultsCountFromRust,
-  visibleItems,
-  visibleStartIndex,
-  getItemByGlobalIndexFn,
-  handleSearch,
-  executeResult,
-  ensureSelectedItemVisibleAndFocusedFn,
-  justFocusedByKeyEvent,
-  setJustFocusedByKeyEvent
-}: {
+export interface RunHistoryModeKeydownContext {
+  runHistory: string[];
+  selectedRunHistoryIndex: number;
+  setSelectedRunHistoryIndex: (index: number) => void;
+  executeAndExitRunHistoryMode: (itemPath: string) => Promise<void>;
+  setIsRunHistoryModeActive: (isActive: boolean) => void;
+  focusSearchInput: () => void;
+  // searchTerm: string; // 文字入力でモード解除するために必要なら追加
+}
+
+export async function handleRunHistoryModeKeydown(event: KeyboardEvent, context: RunHistoryModeKeydownContext) {
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    context.setSelectedRunHistoryIndex(Math.max(0, context.selectedRunHistoryIndex - 1));
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    context.setSelectedRunHistoryIndex(Math.min(context.runHistory.length - 1, context.selectedRunHistoryIndex + 1));
+  } else if (event.key === 'Enter') {
+    event.preventDefault();
+    if (context.selectedRunHistoryIndex >= 0 && context.selectedRunHistoryIndex < context.runHistory.length) {
+      await context.executeAndExitRunHistoryMode(context.runHistory[context.selectedRunHistoryIndex]);
+    }
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    context.setIsRunHistoryModeActive(false);
+    context.setSelectedRunHistoryIndex(-1);
+    context.focusSearchInput();
+  } else if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    context.setIsRunHistoryModeActive(false);
+    context.setSelectedRunHistoryIndex(-1);
+    context.focusSearchInput();
+    // この後の通常検索モードの処理にイベントを渡すため、ここでは event.stopPropagation() しない
+  } else {
+    // 上記以外のキーは実行履歴モード中は無視
+    event.stopPropagation(); // 他のハンドラに影響しないように
+  }
+}
+
+export interface HelpModeKeydownContext {
+  helpScrollTransformY: number;
+  setHelpScrollTransformY: (y: number) => void;
+  HELP_LINE_HEIGHT_PX: number;
+  messageAreaElementRef: HTMLElement | null;
+  helpInnerContentElementRef: HTMLElement | null;
+  setIsHelpModeActive: (isActive: boolean) => void;
+  setHelpContentText: (text: string) => void;
+  focusSearchInput: () => void;
+  // ウィンドウサイズ復元のためのコールバックも必要なら追加
+  restoreWindowHeightBeforeHelp?: () => Promise<void>;
+  setSelectedIndex: (idx: number) => void;
+}
+
+export async function handleHelpModeKeydown(event: KeyboardEvent, context: HelpModeKeydownContext) {
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    context.setHelpScrollTransformY(Math.min(0, context.helpScrollTransformY + context.HELP_LINE_HEIGHT_PX));
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    if (context.messageAreaElementRef && context.helpInnerContentElementRef) {
+      const contentActualHeight = context.helpInnerContentElementRef.offsetHeight;
+      const containerVisibleHeight = context.messageAreaElementRef.clientHeight;
+      const maxScrollDownNegative = Math.min(0, containerVisibleHeight - contentActualHeight);
+      context.setHelpScrollTransformY(Math.max(maxScrollDownNegative, context.helpScrollTransformY - context.HELP_LINE_HEIGHT_PX));
+    }
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    context.setIsHelpModeActive(false);
+    context.setHelpContentText('');
+    context.setHelpScrollTransformY(0);
+    if (context.restoreWindowHeightBeforeHelp) await context.restoreWindowHeightBeforeHelp();
+    await tick();
+    context.focusSearchInput();
+  } else if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    context.setIsHelpModeActive(false);
+    context.setHelpContentText('');
+    context.setHelpScrollTransformY(0);
+    if (context.restoreWindowHeightBeforeHelp) await context.restoreWindowHeightBeforeHelp();
+    context.setSelectedIndex(-1);
+    context.focusSearchInput();
+    // この後の通常検索モードの処理にイベントを渡すため、ここでは event.stopPropagation() しない
+  } else {
+    event.stopPropagation(); // 他のハンドラに影響しないように
+  }
+}
+
+export interface SearchHistoryBrowseKeydownContext {
+  searchHistory: string[];
+  currentHistoryIndex: number;
+  setCurrentHistoryIndex: (index: number) => void;
+  userInputBeforeHistoryBrowse: string | null;
+  setUserInputBeforeHistoryBrowse: (term: string | null) => void;
+  setSearchTerm: (term: string) => void;
+  focusAndSelectSearchInput: () => void;
+}
+
+export async function handleSearchHistoryBrowseKeydown(event: KeyboardEvent, context: SearchHistoryBrowseKeydownContext) {
+  if (context.searchHistory.length === 0) return;
+
+  if (context.currentHistoryIndex === -1 && context.userInputBeforeHistoryBrowse === null) {
+    // 履歴ブラウズ開始前に現在の入力内容を保存 (Svelte側で searchTerm を直接参照する形でも良い)
+    // context.setUserInputBeforeHistoryBrowse(currentSearchTerm); // Svelte側で管理
+  }
+
+  let newHistoryIndex = context.currentHistoryIndex;
+  if (event.key === 'ArrowUp') {
+    if (newHistoryIndex === -1) newHistoryIndex = 0;
+    else newHistoryIndex = (newHistoryIndex - 1 + context.searchHistory.length) % context.searchHistory.length;
+  } else { // ArrowDown
+    if (newHistoryIndex === -1) newHistoryIndex = context.searchHistory.length - 1;
+    else newHistoryIndex = (newHistoryIndex + 1) % context.searchHistory.length;
+  }
+  context.setCurrentHistoryIndex(newHistoryIndex);
+  context.setSearchTerm(context.searchHistory[newHistoryIndex]);
+  await tick();
+  context.focusAndSelectSearchInput();
+}
+
+export interface NormalSearchKeydownContext {
   event: KeyboardEvent,
   itemCount: number,
   selectedIndex: number,
-  setSelectedIndex: (idx: number) => void,
+  navigateAndFocus: (newIndex: number) => Promise<void>, // selectedIndexの更新とフォーカス/スクロール
   totalResultsCountFromRust: number,
   visibleItems: SearchResult[],
   visibleStartIndex: number,
   getItemByGlobalIndexFn: (globalIndex: number) => SearchResult | undefined,
   handleSearch: () => void,
   executeResult: (item: SearchResult) => void,
-  ensureSelectedItemVisibleAndFocusedFn: (isTriggeredByKeyEvent: boolean, resetKeyEventFlag: boolean) => Promise<void>,
-  justFocusedByKeyEvent: boolean,
-  setJustFocusedByKeyEvent: (v: boolean) => void
-}) {
+}
+
+export async function handleNormalSearchKeydown(context: NormalSearchKeydownContext) {
+  const {
+    event,
+    itemCount,
+    selectedIndex,
+    navigateAndFocus,
+    totalResultsCountFromRust,
+    visibleItems,
+    getItemByGlobalIndexFn,
+    handleSearch,
+    executeResult,
+  } = context;
+
   const maxSelectableIndex = itemCount - 1;
+
   if (itemCount > 0) {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       if (selectedIndex < maxSelectableIndex) {
-        setSelectedIndex(selectedIndex + 1);
+        await navigateAndFocus(selectedIndex + 1);
       } else {
-        setSelectedIndex(-1);
+        await navigateAndFocus(-1);
       }
-      setJustFocusedByKeyEvent(true);
-      // selectedIndex が -1 になる場合でも、ensureSelectedItemVisibleAndFocusedFn 内の tick() が
-      // Svelte側のフォーカス処理に良い影響を与えるかもしれないので、呼び出しを戻すよ！
-      await ensureSelectedItemVisibleAndFocusedFn(true, true);
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       if (selectedIndex === -1 && itemCount > 0) {
-        setSelectedIndex(maxSelectableIndex);
+        await navigateAndFocus(maxSelectableIndex);
       } else if (selectedIndex > 0) {
-        setSelectedIndex(selectedIndex - 1);
+        await navigateAndFocus(selectedIndex - 1);
       } else {
-        setSelectedIndex(-1);
+        await navigateAndFocus(-1);
       }
-      setJustFocusedByKeyEvent(true);
-      // 上と同じ理由で、ensureSelectedItemVisibleAndFocusedFn の呼び出しを戻すよ！
-      await ensureSelectedItemVisibleAndFocusedFn(true, true);
     } else if (event.key === 'Tab') {
       if (!event.shiftKey && selectedIndex === -1 && itemCount > 0) {
         event.preventDefault();
-        setSelectedIndex(0);
-        setJustFocusedByKeyEvent(true);
-        await ensureSelectedItemVisibleAndFocusedFn(true, true);
-      } else if (event.shiftKey && selectedIndex === 0) { // アイテム0でShift+Tabを押して入力欄に戻るケース
+        await navigateAndFocus(0);
+      } else if (event.shiftKey && selectedIndex === 0) {
         event.preventDefault();
-        setSelectedIndex(-1);
-        setJustFocusedByKeyEvent(true);
-        await ensureSelectedItemVisibleAndFocusedFn(true, true); // Shift+Tabで入力欄に戻るときも同様に！
+        await navigateAndFocus(-1);
       }
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      if (selectedIndex !== -1) { // アイテム選択中に左右キーで入力欄に戻るケース
+      if (selectedIndex !== -1) {
         event.preventDefault();
-        setSelectedIndex(-1);
-        setJustFocusedByKeyEvent(true);
-        await ensureSelectedItemVisibleAndFocusedFn(true, true); // 左右キーで入力欄に戻るときも！
+        await navigateAndFocus(-1);
       }
     } else if (event.key === 'Enter') {
       if (selectedIndex >= 0 && selectedIndex < totalResultsCountFromRust && visibleItems.length > 0) {
@@ -253,6 +352,77 @@ export async function handleKeydown({
   }
 }
 
+export interface ResultItemKeydownContext {
+  event: KeyboardEvent;
+  localIndex: number; // このアイテムのvisibleItems内でのインデックス
+  itemCount: number;
+  selectedIndex: number;
+  // setSelectedIndex: (idx: number) => void; // navigateAndFocus に統合
+  totalResultsCountFromRust: number;
+  visibleItems: SearchResult[];
+  visibleStartIndex: number;
+  getItemByGlobalIndexFn: (globalIndex: number) => SearchResult | undefined;
+  executeResult: (item: SearchResult) => void;
+  // ensureSelectedItemVisibleAndFocusedFn: (isTriggeredByKeyEvent: boolean, resetKeyEventFlag: boolean) => Promise<void>;
+  // justFocusedByKeyEvent: boolean; // navigateAndFocus内で処理
+  // setJustFocusedByKeyEvent: (v: boolean) => void; // navigateAndFocus内で処理
+  navigateAndFocus: (newIndex: number) => Promise<void>;
+}
+
+export async function handleResultItemKeydown(context: ResultItemKeydownContext) {
+  const {
+    event,
+    localIndex,
+    itemCount,
+    totalResultsCountFromRust,
+    visibleStartIndex,
+    getItemByGlobalIndexFn,
+    executeResult,
+    navigateAndFocus,
+  } = context;
+
+  event.stopPropagation();
+  const maxSelectableIndex = itemCount - 1;
+  const globalCurrentIndex = visibleStartIndex + localIndex;
+
+  if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (globalCurrentIndex === 0) {
+      await navigateAndFocus(-1);
+    } else {
+      await navigateAndFocus(globalCurrentIndex - 1);
+    }
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    if (globalCurrentIndex < maxSelectableIndex) {
+      await navigateAndFocus(globalCurrentIndex + 1);
+    }
+  } else if (event.key === 'Tab') {
+    if (event.shiftKey && globalCurrentIndex === 0) {
+      event.preventDefault();
+      await navigateAndFocus(-1);
+    }
+  } else if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    await navigateAndFocus(-1);
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    await navigateAndFocus(-1);
+  } else if (event.key === 'Enter') {
+    if (globalCurrentIndex >= 0 && globalCurrentIndex < totalResultsCountFromRust) {
+      const itemToExecute = getItemByGlobalIndexFn(globalCurrentIndex);
+      if (itemToExecute) {
+        if (event.ctrlKey) {
+          invoke('open_path_as_admin', { path: itemToExecute.path })
+            .catch(err => console.error('管理者権限での実行に失敗しちゃった… (´；ω；｀)', err));
+        } else {
+          executeResult(itemToExecute);
+        }
+      }
+    }
+  }
+}
+
 /**
  * リストアイテム用のkeydownハンドラ
  */
@@ -260,16 +430,17 @@ export async function handleResultKeydown({
   event,
   idx,
   itemCount,
-  selectedIndex,
-  setSelectedIndex,
+  // selectedIndex, // handleResultItemKeydown には selectedIndex は直接渡さない（navigateAndFocus経由で処理）
+  // setSelectedIndex, // handleResultItemKeydown は navigateAndFocus を使うので不要
   totalResultsCountFromRust,
   visibleItems,
   visibleStartIndex,
   getItemByGlobalIndexFn,
   executeResult,
-  ensureSelectedItemVisibleAndFocusedFn,
-  justFocusedByKeyEvent,
-  setJustFocusedByKeyEvent
+  // ensureSelectedItemVisibleAndFocusedFn, // navigateAndFocus に統合
+  // justFocusedByKeyEvent, // navigateAndFocus で処理
+  // setJustFocusedByKeyEvent, // navigateAndFocus で処理
+  navigateAndFocus // ★★★ これを渡すように変更！ ★★★
 }: {
   event: KeyboardEvent,
   idx: number,
@@ -281,79 +452,22 @@ export async function handleResultKeydown({
   visibleStartIndex: number,
   getItemByGlobalIndexFn: (globalIndex: number) => SearchResult | undefined,
   executeResult: (item: SearchResult) => void,
-  ensureSelectedItemVisibleAndFocusedFn: (isTriggeredByKeyEvent: boolean, resetKeyEventFlag: boolean) => Promise<void>,
-  justFocusedByKeyEvent: boolean,
-  setJustFocusedByKeyEvent: (v: boolean) => void
+  navigateAndFocus: (newIndex: number) => Promise<void> // ★★★ 型定義も更新！ ★★★
 }) {
-  // ★★★ イベントの伝播をここでストップ！ ★★★
-  // リストアイテムでキー操作を処理したら、そのイベントが親要素に伝わって
-  // 意図しないキー処理 (例えば Page.svelte 側の handleKeydown) が
-  // 実行されちゃうのを防ぐよ！
-  // これで、selectedIndex が勝手に書き変わっちゃうのを阻止できるかも！
-  event.stopPropagation();
-  const maxSelectableIndex = itemCount - 1;
-  
-  // ArrowUp, ArrowDown, Tab のキーイベントを処理するよ
-  if (event.key === 'ArrowUp') {
-    event.preventDefault(); // まずデフォルトの動作を止める！
-    if (selectedIndex === 0) { // もし選択中のアイテムがリストの先頭だったら…
-      setSelectedIndex(-1); // 選択を解除して、入力欄にフォーカスを戻すようにするよ
-      setJustFocusedByKeyEvent(true); // キーイベントでフォーカスが変わったことを記録
-      return; // ★ selectedIndex を -1 にしたら、この関数の処理はここで終わり！Svelte側のフォーカス処理に任せるよ！
-    } else {
-      // 先頭じゃなければ、汎用的な handleKeydown に処理をお任せして、一つ上のアイテムに移動するよ
-      await handleKeydown({
-        event,
-        itemCount,
-        selectedIndex,
-        setSelectedIndex,
-        totalResultsCountFromRust,
-        visibleItems,
-        visibleStartIndex,
-        getItemByGlobalIndexFn,
-        handleSearch: () => {}, // リストアイテム上でのEnterは検索じゃないから空関数
-        executeResult,
-        ensureSelectedItemVisibleAndFocusedFn,
-        justFocusedByKeyEvent,
-        setJustFocusedByKeyEvent
-      });
-    }
-  } else if (event.key === 'ArrowDown' || event.key === 'Tab') {
-    // ArrowDown と Tab は、これまで通り handleKeydown に処理を委譲するよ
-    await handleKeydown({
-      event,
-      itemCount,
-      selectedIndex,
-      setSelectedIndex,
-      // ... 他の引数も同様に渡すよ
-      totalResultsCountFromRust, visibleItems, visibleStartIndex, getItemByGlobalIndexFn, handleSearch: () => {}, executeResult, ensureSelectedItemVisibleAndFocusedFn, justFocusedByKeyEvent, setJustFocusedByKeyEvent
-    });
-  } else if (event.key === 'ArrowLeft') {
-    event.preventDefault(); // デフォルト動作を止める
-    setSelectedIndex(-1);
-    setJustFocusedByKeyEvent(true);
-    return; // ★ selectedIndex を -1 にしたら、この関数の処理はここで終わり！Svelte側のフォーカス処理に任せるよ！
-  } else if (event.key === 'ArrowRight') {
-    event.preventDefault();
-    if (selectedIndex !== maxSelectableIndex) {
-      setSelectedIndex(maxSelectableIndex);
-      setJustFocusedByKeyEvent(true);
-      await ensureSelectedItemVisibleAndFocusedFn(true, true);
-    }
-  } else if (event.key === 'Enter') {
-    const globalIdx = visibleStartIndex + idx;
-    if (globalIdx >= 0 && globalIdx < totalResultsCountFromRust) {
-      const itemToExecute = getItemByGlobalIndexFn(globalIdx);
-      if (itemToExecute) {
-        if (event.ctrlKey) {
-          invoke('open_path_as_admin', { path: itemToExecute.path })
-            .catch(err => console.error('管理者権限での実行に失敗しちゃった… (´；ω；｀)', err));
-        } else {
-          executeResult(itemToExecute);
-        }
-      }
-    }
-  }
+  // 新しい handleResultItemKeydown を呼び出すよ！
+  // 必要な情報を context オブジェクトにまとめて渡すイメージだね。
+  await handleResultItemKeydown({
+    event,
+    localIndex: idx,
+    itemCount,
+    selectedIndex: -1, // handleResultItemKeydown は selectedIndex を直接使わないのでダミー値を渡すか、型定義から削除してもOK
+    totalResultsCountFromRust,
+    visibleItems,
+    visibleStartIndex,
+    getItemByGlobalIndexFn,
+    executeResult,
+    navigateAndFocus,
+  });
 }
 
 // これでキーボード系のロジックはここに集約！

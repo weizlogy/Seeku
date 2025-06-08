@@ -25,7 +25,15 @@
   import { setLocale as setI18nLocale, currentLocale as i18nLocaleStore, availableLocales as i18nAvailableLocales, $_ as t } from '$lib/i18n'; // ← インポート追加！
   import { createScrollHandler, calcListAndWindowHeight, calcItemCount } from '$lib/listViewLogic';
   import { handleCommand as processCommand } from '$lib/commandHandler'; // ← コマンド処理をインポート！
-  import { ensureSelectedItemVisibleAndFocused, getItemByGlobalIndex } from '$lib/keyboardHandlers';
+  import {
+    ensureSelectedItemVisibleAndFocused,
+    getItemByGlobalIndex,
+    handleRunHistoryModeKeydown,
+    handleHelpModeKeydown,
+    handleSearchHistoryBrowseKeydown,
+    handleNormalSearchKeydown,
+    handleResultItemKeydown
+  } from '$lib/keyboardHandlers';
   import styles from './+page.module.css';
 
   let searchInput: HTMLInputElement; // input要素を後でつかまえるためのおてて！
@@ -37,6 +45,7 @@
   let helpScrollTransformY: number = 0;     // ヘルプをどれだけY軸方向に動かすか！
   const HELP_LINE_HEIGHT_PX: number = 18;   // ヘルプ1行あたりの高さ（CSSのline-heightと合わせようね！）
   let previousWindowHeightBeforeHelp: number | undefined = undefined; // ヘルプモードに入る前のウィンドウの高さを記憶するおてて！
+  let initialWindowHeight: number | undefined = undefined; // ★★★ アプリ起動時のウィンドウの高さを記憶するおてて！ ★★★
   let previousWindowHeightBeforeRunHistory: number | undefined = undefined; // 実行履歴モードに入る前のウィンドウの高さを記憶するおてて！
   let messageAreaElementRef: HTMLElement | null = null; // メッセージ表示エリアのDOM要素への参照！
   let helpInnerContentElementRef: HTMLElement | null = null; // ヘルプのインナーテキスト要素の参照！
@@ -535,18 +544,26 @@ async function fetchAndSetIconType(itemPath: string) {
     // ★★★ Shift + ↓/↑ で実行履歴モードを操作する処理をここに追加！ ★★★
     // (入力欄にフォーカスがあるときだけ反応するようにするね！)
     if (document.activeElement === searchInput) {
+      // Shift + ArrowDown/ArrowUp は実行履歴モードの開始/ナビゲーションなので、
+      // 他のモード別ハンドラより先に処理する
       if (event.shiftKey && event.key === 'ArrowDown') {
         event.preventDefault(); // デフォルトのスクロールとかを防ぐよ！
         if (!isRunHistoryModeActive && runHistory.length > 0) {
-          // ★★★ ここから追加！ ★★★
-          // 実行履歴モードに入る前に、現在のウィンドウの高さを記憶しておくよ！
-          try {
-            const currentSize = await WebviewWindow.getCurrent().innerSize();
-            previousWindowHeightBeforeRunHistory = currentSize.height;
-          } catch (e) { console.error("実行履歴モード開始前のウィンドウ高さ取得に失敗:", e); }
-          // ★★★ ここまで追加！ ★★★
+          // 実行履歴モードに入る
+          // ★★★ ここから修正！ ★★★
+          // 実行履歴モードに入る前に、"起動時の"ウィンドウの高さを記憶しておくよ！
+          if (initialWindowHeight !== undefined) {
+            previousWindowHeightBeforeRunHistory = initialWindowHeight;
+          } else {
+            // もし initialWindowHeight がまだ設定されてなかったら（ほぼあり得ないけど念のため）、
+            // 現在のウィンドウの高さをフォールバックとして使うね！
+            try {
+              const currentSize = await WebviewWindow.getCurrent().innerSize();
+              previousWindowHeightBeforeRunHistory = currentSize.height;
+            } catch (e) { console.error("実行履歴モード開始前のウィンドウ高さ取得に失敗(フォールバック):", e); }
+          }
+          // ★★★ ここまで修正！ ★★★
           // 実行履歴表示モードをON！
-          isRunHistoryModeActive = true;
           selectedRunHistoryIndex = 0; // 最初のアイテムを選択状態にするよ！
           // ヘルプモードだったら解除 (ウィンドウ高さも戻すよ)
           if (isHelpModeActive) {
@@ -559,6 +576,7 @@ async function fetchAndSetIconType(itemPath: string) {
               previousWindowHeightBeforeHelp = undefined;
             }
           }
+          isRunHistoryModeActive = true; // 状態変更は他の表示クリア後の方が良いかも
           // 実行履歴モードに入るときは、他の表示をクリア
           message = '';
           visibleItems = [];
@@ -599,150 +617,75 @@ async function fetchAndSetIconType(itemPath: string) {
 
     // もし実行履歴モードがアクティブだったら、そっちのキー操作を優先するよ！
     if (isRunHistoryModeActive) {
-      // 検索入力欄にフォーカスがある時だけ反応するよ！
       if (document.activeElement !== searchInput) return;
-
-      if (event.key === 'ArrowUp') {
-        event.preventDefault(); // デフォルトのスクロールとかを防ぐよ！
-        // 選択を上に移動
-        selectedRunHistoryIndex = Math.max(0, selectedRunHistoryIndex - 1);
-        // 選択アイテムが見えるようにスクロールが必要なら、それは後で実装するかも？
-        // 今はシンプルに選択インデックスだけ変えるね！
-      } else if (event.key === 'ArrowDown') {
-        event.preventDefault(); // デフォルトのスクロールとかを防ぐよ！
-        // 選択を下に移動
-        selectedRunHistoryIndex = Math.min(runHistory.length - 1, selectedRunHistoryIndex + 1);
-        // 選択アイテムが見えるようにスクロールが必要なら、それは後で実装するかも？
-      } else if (event.key === 'Enter') {
-        event.preventDefault(); // デフォルトのフォーム送信とかを防ぐよ！
-        // 選択中の実行履歴アイテムを実行！
-        if (selectedRunHistoryIndex >= 0 && selectedRunHistoryIndex < runHistory.length) {
-          await executeAndExitRunHistoryMode(runHistory[selectedRunHistoryIndex]);
-        }
-      } else if (event.key === 'Escape') {
-        event.preventDefault(); // デフォルトの挙動を防ぐよ！
-        // Escキーで実行履歴モードを解除！
-        isRunHistoryModeActive = false;
-        selectedRunHistoryIndex = -1; // 選択も解除！
-        // 検索入力欄にフォーカスを戻す
-        searchInput?.focus();
-      } else if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
-        // 実行履歴モード中に何か文字入力があったら、モードを解除して通常の検索に戻るよ！
-        // event.key が1文字の printable character で、CtrlやAltが押されてない場合
-        isRunHistoryModeActive = false;
-        selectedRunHistoryIndex = -1; // 選択も解除！
-        // searchTerm はこの後の通常のキー処理で更新されるはず！
-        // 検索入力欄にフォーカスを戻す (既にフォーカスされてるはずだけど念のため)
-        searchInput?.focus();
-        // 以降の通常のキー処理に進ませるために return しないよ！
-      } else {
-        // 上記以外のキーは実行履歴モード中は無視する
-        return;
-      }
+      await handleRunHistoryModeKeydown(event, {
+        runHistory,
+        selectedRunHistoryIndex,
+        setSelectedRunHistoryIndex: (idx) => selectedRunHistoryIndex = idx,
+        executeAndExitRunHistoryMode,
+        setIsRunHistoryModeActive: (val) => {
+          isRunHistoryModeActive = val;
+          if (!val && previousWindowHeightBeforeRunHistory !== undefined && currentWindowWidth !== undefined) {
+            WebviewWindow.getCurrent().setSize(new PhysicalSize(currentWindowWidth, previousWindowHeightBeforeRunHistory))
+              .catch(e => console.error("ウィンドウ高さの復元に失敗:", e))
+              .finally(() => previousWindowHeightBeforeRunHistory = undefined);
+          }
+        },
+        focusSearchInput: () => searchInput?.focus(),
+      });
       return; // 実行履歴モードでのキー操作が完了したら、他の処理はしないよ！
     }
+
     // ★★★ ヘルプモード中のキー操作をここに追加！ ★★★
     if (isHelpModeActive) {
-      if (event.key === 'ArrowUp') {
-        event.preventDefault(); // デフォルトのスクロールとかを防ぐよ！
-        // ヘルプを上にスクロール（transformYを増やす）
-        helpScrollTransformY = Math.min(0, helpScrollTransformY + HELP_LINE_HEIGHT_PX);
-      } else if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        // messageAreaElementRef (表示コンテナ) と helpInnerContentElementRef (実際のテキストコンテンツ) が必要だよ！
-        if (messageAreaElementRef && helpInnerContentElementRef) {
-          const contentActualHeight = helpInnerContentElementRef.offsetHeight;
-          const containerVisibleHeight = messageAreaElementRef.clientHeight;
-          // ヘルプを下にスクロール（transformYを減らす）
-          // ただし、コンテンツの下端が表示エリアの下端より上には行かないようにするよ！
-          // (コンテンツ高さ - コンテナ表示高さ) がスクロールできる最大マイナス値
-          const maxScrollDownNegative = Math.min(0, containerVisibleHeight - contentActualHeight);
-
-          helpScrollTransformY = Math.max(maxScrollDownNegative, helpScrollTransformY - HELP_LINE_HEIGHT_PX);
-        }
-      } else if (event.key === 'Escape') {
-        // Escキーでヘルプモードを解除！
-        isHelpModeActive = false;
-        helpContentText = ''; // ヘルプ内容もクリア
-        helpScrollTransformY = 0; // スクロール位置もリセット
-
-        // ヘルプモード解除時にウィンドウの高さを元に戻す
-        if (previousWindowHeightBeforeHelp !== undefined && currentWindowWidth !== undefined) {
-          try {
-            await WebviewWindow.getCurrent().setSize(new PhysicalSize(currentWindowWidth, previousWindowHeightBeforeHelp));
-          } catch (e) { console.error("ウィンドウ高さの復元に失敗:", e); }
-          previousWindowHeightBeforeHelp = undefined;
-        }
-        await tick(); // DOM更新や他のリアクティブな処理を待つ
-
-        if (searchInput) {
-          searchInput.focus();
-          // Escでヘルプ解除時は searchTerm をクリアしてもいいかも？
-          // searchTerm = ''; // 必要ならコメントアウト解除
-        }
-        return; // Escキーの処理はここまで
-      }
-      // --- ここから、ヘルプモード中に文字入力があった場合の処理を追加 ---
-      // event.key が1文字の printable character で、CtrlやAltが押されてない場合
-      if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
-        // ヘルプモードを解除！
-        isHelpModeActive = false;
-        helpContentText = '';
-        helpScrollTransformY = 0;
-        if (previousWindowHeightBeforeHelp !== undefined && currentWindowWidth !== undefined) {
-          try {
-            await WebviewWindow.getCurrent().setSize(new PhysicalSize(currentWindowWidth, previousWindowHeightBeforeHelp));
-          } catch (e) { console.error("ウィンドウ高さの復元に失敗:", e); }
-          previousWindowHeightBeforeHelp = undefined;
-        }
-        // searchTerm を入力された文字で更新して、入力欄にフォーカスを戻す
-        // searchTerm = event.key; // ← これだと1文字だけになっちゃうので、handleSearchに任せる
-        if (searchInput) {
-          searchInput.focus(); // まずフォーカス
-          // searchInput.value に直接セットするよりは、
-          // この後の通常のキー処理に任せて searchTerm が更新されるのを期待する方が自然かも。
-          // あるいは、ここで searchTerm = event.key; して handleSearch() を呼ぶか。
-          // ここでは、ヘルプモードを抜けるだけにして、後続の処理で searchTerm が更新されるのを待つ形にしてみるね。
-        }
-        // selectedIndex もリセットしておくのが安全だね！
-        selectedIndex = -1;
-        // ヘルプモードを抜けたので、以降の通常のキー処理に進ませるために return しないよ！
+      await handleHelpModeKeydown(event, {
+        helpScrollTransformY,
+        setHelpScrollTransformY: (y) => helpScrollTransformY = y,
+        HELP_LINE_HEIGHT_PX,
+        messageAreaElementRef,
+        helpInnerContentElementRef,
+        setIsHelpModeActive: (val) => isHelpModeActive = val,
+        setHelpContentText: (text) => helpContentText = text,
+        focusSearchInput: () => searchInput?.focus(),
+        restoreWindowHeightBeforeHelp: async () => {
+          if (previousWindowHeightBeforeHelp !== undefined && currentWindowWidth !== undefined) {
+            try {
+              await WebviewWindow.getCurrent().setSize(new PhysicalSize(currentWindowWidth, previousWindowHeightBeforeHelp));
+            } catch (e) { console.error("ウィンドウ高さの復元に失敗:", e); }
+            previousWindowHeightBeforeHelp = undefined;
+          }
+        },
+        setSelectedIndex: (idx) => selectedIndex = idx,
+      });
+      // handleHelpModeKeydown内でreturnされなかった場合（文字入力でモード解除など）は、
+      // 後続の通常検索キー処理に進むことがあるので、ここではreturnしない。
+      // ただし、ヘルプモード専用のキー操作（矢印、Esc）の場合はハンドラ内でstopPropagationされる想定。
+      if (event.defaultPrevented || !isHelpModeActive) { // イベントが処理されたか、モードが解除されたら
+         // defaultPrevented は stopPropagation とは違うので注意。
+         // HelpModeKeydown内で、専用キーはstopPropagation()も呼ぶべき。
+         // ここでは、モードが解除されたら次に進む、という意図。
       } else {
-        // 上下矢印、Esc、文字入力以外のキーはヘルプモード中は無視する
-        return;
+        return; // ヘルプモード継続中ならここで終了
       }
     }
+
     // ★★★ Ctrl+↑/↓ で検索履歴を操作する処理を追加！ ★★★
     if (event.ctrlKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && document.activeElement === searchInput) {
       event.preventDefault(); // デフォルトの挙動（ページのスクロールとか）を止めるよ！
-      if (searchHistory.length === 0) {
-        // 履歴が空っぽなら何もしないよ
-        return;
-      }
-
-      if (currentHistoryIndex === -1) {
-        // 履歴ブラウズを開始する前に、現在の入力内容を保存しておくよ
-        userInputBeforeHistoryBrowse = searchTerm;
-      }
-
-      if (event.key === 'ArrowUp') { // Ctrl + ↑ : より新しい履歴へ（または最初/最後へ）
-        if (currentHistoryIndex === -1) { // 履歴未選択状態からなら、一番新しい履歴(index 0)へ
-          currentHistoryIndex = 0;
-        } else {
-          currentHistoryIndex = (currentHistoryIndex - 1 + searchHistory.length) % searchHistory.length;
+      await handleSearchHistoryBrowseKeydown(event, {
+        searchHistory,
+        currentHistoryIndex,
+        setCurrentHistoryIndex: (idx) => currentHistoryIndex = idx,
+        userInputBeforeHistoryBrowse,
+        setUserInputBeforeHistoryBrowse: (term) => userInputBeforeHistoryBrowse = term,
+        setSearchTerm: (term) => searchTerm = term,
+        focusAndSelectSearchInput: () => {
+          if (searchInput) {
+            searchInput.focus();
+            searchInput.select();
+          }
         }
-      } else { // Ctrl + ↓ : より古い履歴へ（または最初/最後へ）
-        if (currentHistoryIndex === -1) { // 履歴未選択状態からなら、一番古い履歴へ
-          currentHistoryIndex = searchHistory.length - 1;
-        } else {
-          currentHistoryIndex = (currentHistoryIndex + 1) % searchHistory.length;
-        }
-      }
-      searchTerm = searchHistory[currentHistoryIndex];
-      await tick(); // searchTermの変更をDOMに反映させてから…
-      if (searchInput) {
-        searchInput.select(); // 入力内容を全選択すると、次の入力で上書きしやすいね！
-      }
+      });
       return; // 履歴操作をしたら、他のキー処理はしないよ！
     }
 
@@ -758,100 +701,35 @@ async function fetchAndSetIconType(itemPath: string) {
       }
     }
     // ★★★ ここまで追加 ★★★
-    const maxSelectableIndex = itemCount - 1;
 
-    if (itemCount > 0) { // アイテムがあるときだけナビゲーションするよ！
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        if (selectedIndex < maxSelectableIndex) {
-          await navigateAndFocus(selectedIndex + 1);
-        } else {
-          await navigateAndFocus(-1); // 一番下からさらに下で入力欄に戻るよ
-        }
-        return; // ★★★ 追加: スクロール処理をしたら、他のキー操作はしない ★★★
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        if (selectedIndex === -1 && itemCount > 0) { // 入力欄から上で一番最後のアイテムへ
-          await navigateAndFocus(maxSelectableIndex);
-        } else if (selectedIndex > 0) {
-          await navigateAndFocus(selectedIndex - 1);
-        } else { // アイテム0番からさらに上で入力欄に戻るよ
-          await navigateAndFocus(-1);
-        }
-        return; // ★★★ 追加: スクロール処理をしたら、他のキー操作はしない ★★★
-      } else if (event.key === 'Tab') {
-        if (!event.shiftKey && selectedIndex === -1 && itemCount > 0) { // Tabで入力欄から最初のアイテムへ
-          event.preventDefault();
-          await navigateAndFocus(0);
-        } else if (event.shiftKey && selectedIndex === 0) { // Shift+Tabで最初のアイテムから入力欄へ
-          console.log('Shift+Tab で入力欄に戻る');
-          event.preventDefault();
-          await navigateAndFocus(-1);
-        }
-        // Tabキーの他の挙動はデフォルトに任せるよ (リスト内でのTab移動はここでは扱わない)
-      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-        // アイテムが選択されてる時に ← → で入力欄に戻るよ！
-        if (selectedIndex !== -1) {
-          event.preventDefault();
-          await navigateAndFocus(-1);
-        }
-        // 入力欄がフォーカスされてる時の ← → はデフォルトのカーソル移動に任せるよ
-      } else if (event.key === 'Enter') { // Enterキーの処理！
-        if (selectedIndex >= 0 && selectedIndex < totalResultsCountFromRust && visibleItems.length > 0) {
-          const itemToExecute = getItemByGlobalIndex(selectedIndex, visibleStartIndex, visibleItems);
-          if (itemToExecute) {
-            if (event.ctrlKey) {
-              // Ctrl + Enter の場合は管理者権限で実行！
-              invoke('open_path_as_admin', { path: itemToExecute.path })
-                .catch(err => console.error('管理者権限での実行に失敗しちゃった… (´；ω；｀)', err));
-            } else {
-              executeResult(itemToExecute);
-            }
-          }
-        } else {
-          handleSearch(); // 選択されてない時は検索実行！
-        }
-      }
-    } else if (event.key === 'Enter') {
-      handleSearch();
-    }
+    // 上記のどのモードにも当てはまらない場合は、通常の検索関連のキー操作
+    await handleNormalSearchKeydown({
+      event,
+      itemCount,
+      selectedIndex,
+      navigateAndFocus,
+      totalResultsCountFromRust,
+      visibleItems,
+      visibleStartIndex,
+      getItemByGlobalIndexFn: (idx) => getItemByGlobalIndex(idx, visibleStartIndex, visibleItems),
+      handleSearch,
+      executeResult,
+    });
   }
 
   async function handleResultKeydown(event: KeyboardEvent, idx: number) {
-    const maxSelectableIndex = itemCount - 1;
-    const globalCurrentIndex = visibleStartIndex + idx; // このアイテムの全体でのインデックス
-
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'Tab') {
-      // ArrowUp, ArrowDown, Tab は handleKeydown のロジックをそのまま使うよ！
-      // selectedIndex は handleKeydown の中で更新されるから、ここでは何もしなくてOK！
-      await handleKeydown(event); 
-    } else if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      await navigateAndFocus(-1); // ← で入力欄に戻る！
-    } else if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      // 元のコードでは → で最後のアイテムに飛んでたね！面白い挙動！(・∀・)
-      // もしこれが意図した動作なら、これでOK！
-      // もし入力欄に戻したいなら navigateAndFocus(-1) だね！
-      await navigateAndFocus(maxSelectableIndex);
-    } else if (event.key === 'Enter') {
-      // Enterキーでアイテムを実行！
-      // globalCurrentIndex はこのアイテム自身のインデックスだから、これを使うよ！
-      // selectedIndex がこのアイテムを指していることを確認してもいいかもだけど、
-      // Enterイベントがこのアイテムで起きてるなら、このアイテムを実行するのが自然だね！
-      if (globalCurrentIndex >= 0 && globalCurrentIndex < totalResultsCountFromRust) {
-        const itemToExecute = getItemByGlobalIndex(globalCurrentIndex, visibleStartIndex, visibleItems);
-        if (itemToExecute) {
-          if (event.ctrlKey) {
-            // Ctrl + Enter の場合は管理者権限で実行！
-            invoke('open_path_as_admin', { path: itemToExecute.path })
-              .catch(err => console.error('管理者権限での実行に失敗しちゃった… (´；ω；｀)', err));
-          } else {
-            executeResult(itemToExecute);
-          }
-        }
-      }
-    }
+    await handleResultItemKeydown({
+      event,
+      localIndex: idx,
+      itemCount,
+      selectedIndex,
+      totalResultsCountFromRust,
+      visibleItems,
+      visibleStartIndex,
+      getItemByGlobalIndexFn: (gIdx) => getItemByGlobalIndex(gIdx, visibleStartIndex, visibleItems),
+      executeResult,
+      navigateAndFocus,
+    });
   }
 
   // ファイルやフォルダを実行する処理（Windows用: startコマンドで開く）
@@ -904,6 +782,12 @@ async function fetchAndSetIconType(itemPath: string) {
         settingsApplied = true;
         const currentAppWindow = WebviewWindow.getCurrent();
         await currentAppWindow.show().then(() => {
+          // ★★★ ウィンドウが表示されたら、最初の高さを記憶しておくよ！ ★★★
+          currentAppWindow.innerSize().then(size => {
+            if (initialWindowHeight === undefined) { // まだ設定されてなければ
+              initialWindowHeight = size.height;
+            }
+          }).catch(e => console.error("初期ウィンドウ高さの取得に失敗:", e));
           currentAppWindow.isVisible().then(visible => {});
           currentAppWindow.setFocus();
         }).catch(() => {});
@@ -930,6 +814,10 @@ async function fetchAndSetIconType(itemPath: string) {
     });
     currentAppWindow.innerSize().then(size => {
       // console.log('Initial window inner size:', size);
+      // ★★★ onMountの最初の方でも高さを記憶しようとしてみるよ！ ★★★
+      if (initialWindowHeight === undefined) { // まだ設定されてなければ
+        initialWindowHeight = size.height;
+      }
     });
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
       if (event.target !== searchInput && event.key.length === 1
