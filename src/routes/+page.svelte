@@ -37,9 +37,15 @@
   let helpScrollTransformY: number = 0;     // ヘルプをどれだけY軸方向に動かすか！
   const HELP_LINE_HEIGHT_PX: number = 18;   // ヘルプ1行あたりの高さ（CSSのline-heightと合わせようね！）
   let previousWindowHeightBeforeHelp: number | undefined = undefined; // ヘルプモードに入る前のウィンドウの高さを記憶するおてて！
+  let previousWindowHeightBeforeRunHistory: number | undefined = undefined; // 実行履歴モードに入る前のウィンドウの高さを記憶するおてて！
   let messageAreaElementRef: HTMLElement | null = null; // メッセージ表示エリアのDOM要素への参照！
   let helpInnerContentElementRef: HTMLElement | null = null; // ヘルプのインナーテキスト要素の参照！
   // ★★★ ここまで追加 ★★★
+
+  // ★★★ 実行履歴関連のおててたち！ ★★★
+  let runHistory: string[] = []; // 実行履歴を保持する配列だよ！新しいものが先頭！
+  let isRunHistoryModeActive: boolean = false; // 実行履歴表示中かどうかのフラグ！
+  let selectedRunHistoryIndex: number = -1; // 実行履歴表示中の選択インデックス！ (-1は未選択)
 
   let visibleItems: SearchResult[] = []; // 今、画面に見えてる範囲のアイテムたち！ ✨
   let visibleStartIndex: number = 0;     // visibleItems が、全体の何番目から始まってるか！
@@ -169,7 +175,7 @@
   // ★★★ 検索履歴をRustセンパイに保存してもらう関数！ ★★★
   async function saveSearchHistoryToBackend() {
     try {
-      await invoke('save_search_history', { history: searchHistory });
+      await invoke('save_search_history_cmd', { history: searchHistory }); // ★★★ コマンド名を修正！ ★★★
     } catch (error) {
       console.error('検索履歴の保存に失敗しちゃった… (´；ω；｀)', error);
       // ここでユーザーに通知してもいいかもだけど、頻繁に呼ばれる可能性があるのでコンソールログだけに留めるね
@@ -186,6 +192,41 @@
     searchHistory = newHistory.slice(0, maxHistoryCount); // 最大件数を超えないようにカット！
   }
 
+  // ★★★ 実行履歴をRustセンパイに保存してもらう関数！ ★★★
+  async function saveRunHistoryToBackend() {
+    try {
+      // 実行履歴の最大件数は検索履歴と共通の maxHistoryCount を使うよ
+      const historyToSave = runHistory.slice(0, maxHistoryCount);
+      await invoke('save_run_history_cmd', { history: historyToSave }); // ★★★ コマンド名を修正！ ★★★
+    } catch (error) {
+      console.error('実行履歴の保存に失敗しちゃった… (´；ω；｀)', error);
+    }
+  }
+
+  // ★★★ 実行したアイテムを実行履歴に追加する関数！ ★★★
+  function addRunHistoryItem(path: string) {
+    if (!path.trim()) { // 空のパスは追加しないよ！
+      return;
+    }
+    // 新しいパスを先頭に追加して、重複があれば古い方を消すよ
+    const newHistory = [path, ...runHistory.filter(h => h !== path)];
+    // 実行履歴の最大件数は検索履歴と共通の maxHistoryCount を使うよ
+    runHistory = newHistory.slice(0, maxHistoryCount); // 最大件数を超えないようにカット！
+    // 履歴に追加したら、非同期で保存！
+    saveRunHistoryToBackend();
+  }
+
+  // ★★★ パス文字列からファイル名（またはディレクトリ名）だけを取り出すヘルパー関数だよ！ ★★★
+  function getBaseName(fullPath: string): string {
+    if (!fullPath) return '';
+    // "file:" スキームがあったら取り除くよ！
+    const pathWithoutScheme = fullPath.replace(/^file:[/]+/, '');
+    // 最後の / か \ の後ろの部分が名前だね！
+    const lastSlashIndex = Math.max(pathWithoutScheme.lastIndexOf('/'), pathWithoutScheme.lastIndexOf('\\'));
+    // もし / も \ もなかったら、パス全体が名前ってことにするね！
+    return lastSlashIndex === -1 ? pathWithoutScheme : pathWithoutScheme.substring(lastSlashIndex + 1);
+  }
+
  /**
   * 検索キーワードで検索し、結果を表示する
   */
@@ -196,6 +237,13 @@ async function handleSearch() {
     return; // 処理を中断するよ！
   }
   // ★★★ ここまで追加 ★★★
+
+  // ★★★ 検索が始まったら、実行履歴モードだったら解除する (既存関数修正) ★★★
+  if (isRunHistoryModeActive) {
+    isRunHistoryModeActive = false;
+    selectedRunHistoryIndex = -1; // 選択も解除
+  }
+
   // ★★★ ここからコマンド処理の分岐を追加 ★★★
   // searchTerm が `/` で始まる場合はコマンドとして処理するよ！
   if (searchTerm.startsWith('/')) {
@@ -225,6 +273,24 @@ async function handleSearch() {
         searchHistory,
         setSearchHistory: (newHistory: string[]) => { searchHistory = newHistory; },
         saveSearchHistory: saveSearchHistoryToBackend,
+        // ↓ 実行履歴関連のオプションを渡す！ (既存関数修正)
+        runHistory,
+        setRunHistory: (newHistory: string[]) => { runHistory = newHistory; },
+        saveRunHistory: saveRunHistoryToBackend,
+        maxRunHistoryCount: maxHistoryCount, // 実行履歴の最大件数も検索履歴と共通
+        setMaxRunHistoryCount: async (count: number) => { // 最大件数設定関数
+          maxHistoryCount = count; // Svelte側の状態を更新
+          await saveWindowSettingsToRust({
+            maxSearchHistory: maxHistoryCount,
+            opacity: currentOpacity / 100,
+            backgroundColor: currentBackgroundColor,
+            width: currentWindowWidth, x: currentWindowX, y: currentWindowY, displayLimit
+          });
+        },
+        executePath: async (path: string) => { // コマンドからパスを実行する関数
+          await invoke('open_path', { path }); // Rustにパス実行を依頼
+          addRunHistoryItem(path); // 実行したら履歴にも追加！
+        },
         setLocale: setI18nLocale, // ← 言語設定関数を渡す！
         currentLocale: get(i18nLocaleStore), // ← 現在のロケールを渡す！ (getで値を取得)
         availableLocales: i18nAvailableLocales, // ← 利用可能なロケールリストを渡す！
@@ -451,7 +517,130 @@ async function fetchAndSetIconType(itemPath: string) {
     await tick(); // ★★★ ダメ元で、DOM更新を待ってみる！ ★★★
   }
 
+  // ★★★ 実行履歴アイテムを実行してモードを終了するヘルパー関数 (handleKeydownから移動してきたよ！) ★★★
+  async function executeAndExitRunHistoryMode(itemPath: string) {
+    await executeResult({ path: itemPath, name: itemPath, iconType: null }); // アイテムを実行！
+    // isRunHistoryModeActive = false;   // ← これをコメントアウト！実行履歴モードは維持するよ！
+    selectedRunHistoryIndex = -1;   // 実行履歴の選択は解除しておくね！
+
+    if (searchInput) {
+      await tick(); // DOM更新や状態変更の反映を待つ
+      searchInput.focus(); // 検索入力欄にフォーカスを戻す
+    }
+  }
+
+
+
   async function handleKeydown(event: KeyboardEvent) {
+    // ★★★ Shift + ↓/↑ で実行履歴モードを操作する処理をここに追加！ ★★★
+    // (入力欄にフォーカスがあるときだけ反応するようにするね！)
+    if (document.activeElement === searchInput) {
+      if (event.shiftKey && event.key === 'ArrowDown') {
+        event.preventDefault(); // デフォルトのスクロールとかを防ぐよ！
+        if (!isRunHistoryModeActive && runHistory.length > 0) {
+          // ★★★ ここから追加！ ★★★
+          // 実行履歴モードに入る前に、現在のウィンドウの高さを記憶しておくよ！
+          try {
+            const currentSize = await WebviewWindow.getCurrent().innerSize();
+            previousWindowHeightBeforeRunHistory = currentSize.height;
+          } catch (e) { console.error("実行履歴モード開始前のウィンドウ高さ取得に失敗:", e); }
+          // ★★★ ここまで追加！ ★★★
+          // 実行履歴表示モードをON！
+          isRunHistoryModeActive = true;
+          selectedRunHistoryIndex = 0; // 最初のアイテムを選択状態にするよ！
+          // ヘルプモードだったら解除 (ウィンドウ高さも戻すよ)
+          if (isHelpModeActive) {
+            isHelpModeActive = false;
+            helpScrollTransformY = 0;
+            if (previousWindowHeightBeforeHelp !== undefined && currentWindowWidth !== undefined) {
+              try {
+                await WebviewWindow.getCurrent().setSize(new PhysicalSize(currentWindowWidth, previousWindowHeightBeforeHelp));
+              } catch (e) { console.error("ウィンドウ高さの復元に失敗:", e); }
+              previousWindowHeightBeforeHelp = undefined;
+            }
+          }
+          // 実行履歴モードに入るときは、他の表示をクリア
+          message = '';
+          visibleItems = [];
+          totalResultsCountFromRust = 0;
+          selectedIndex = -1; // 通常の検索結果の選択も解除
+        } else if (isRunHistoryModeActive && runHistory.length > 0) {
+          // 実行履歴表示モード中なら、選択を下に移動 (Shift + ↓ でも移動できるように)
+          selectedRunHistoryIndex = Math.min(runHistory.length - 1, selectedRunHistoryIndex + 1);
+        }
+        return; // Shift + ↓ の処理はここまで！
+      } else if (event.shiftKey && event.key === 'ArrowUp') {
+        event.preventDefault(); // デフォルトのスクロールとかを防ぐよ！
+        if (isRunHistoryModeActive && selectedRunHistoryIndex > 0) {
+          // 実行履歴表示モード中なら、選択を上に移動 (Shift + ↑ でも移動できるように)
+          selectedRunHistoryIndex = Math.max(0, selectedRunHistoryIndex - 1);
+        } else if (isRunHistoryModeActive && selectedRunHistoryIndex === 0) {
+          // 実行履歴表示モード中、かつ最初のアイテム選択中に Shift+↑ ならモード解除
+          isRunHistoryModeActive = false;
+          selectedRunHistoryIndex = -1; // 実行履歴の選択は解除するよ
+          // モード解除時にウィンドウの高さを元に戻す
+          if (previousWindowHeightBeforeRunHistory !== undefined && currentWindowWidth !== undefined) {
+            try {
+              await WebviewWindow.getCurrent().setSize(new PhysicalSize(currentWindowWidth, previousWindowHeightBeforeRunHistory));
+            } catch (e) { console.error("ウィンドウ高さの復元に失敗:", e); }
+            previousWindowHeightBeforeHelp = undefined;
+          }
+          await tick(); // DOM更新や他のリアクティブな処理を待つ
+
+          // モード解除時は検索入力欄にフォーカスを戻すのが親切かも
+          searchInput?.focus();
+        }
+        return; // Shift + ↑ の処理はここまで！
+      }
+    }
+    // ★★★ ここまで Shift + ↓/↑ の処理 ★★★
+
+
+
+    // もし実行履歴モードがアクティブだったら、そっちのキー操作を優先するよ！
+    if (isRunHistoryModeActive) {
+      // 検索入力欄にフォーカスがある時だけ反応するよ！
+      if (document.activeElement !== searchInput) return;
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault(); // デフォルトのスクロールとかを防ぐよ！
+        // 選択を上に移動
+        selectedRunHistoryIndex = Math.max(0, selectedRunHistoryIndex - 1);
+        // 選択アイテムが見えるようにスクロールが必要なら、それは後で実装するかも？
+        // 今はシンプルに選択インデックスだけ変えるね！
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault(); // デフォルトのスクロールとかを防ぐよ！
+        // 選択を下に移動
+        selectedRunHistoryIndex = Math.min(runHistory.length - 1, selectedRunHistoryIndex + 1);
+        // 選択アイテムが見えるようにスクロールが必要なら、それは後で実装するかも？
+      } else if (event.key === 'Enter') {
+        event.preventDefault(); // デフォルトのフォーム送信とかを防ぐよ！
+        // 選択中の実行履歴アイテムを実行！
+        if (selectedRunHistoryIndex >= 0 && selectedRunHistoryIndex < runHistory.length) {
+          await executeAndExitRunHistoryMode(runHistory[selectedRunHistoryIndex]);
+        }
+      } else if (event.key === 'Escape') {
+        event.preventDefault(); // デフォルトの挙動を防ぐよ！
+        // Escキーで実行履歴モードを解除！
+        isRunHistoryModeActive = false;
+        selectedRunHistoryIndex = -1; // 選択も解除！
+        // 検索入力欄にフォーカスを戻す
+        searchInput?.focus();
+      } else if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        // 実行履歴モード中に何か文字入力があったら、モードを解除して通常の検索に戻るよ！
+        // event.key が1文字の printable character で、CtrlやAltが押されてない場合
+        isRunHistoryModeActive = false;
+        selectedRunHistoryIndex = -1; // 選択も解除！
+        // searchTerm はこの後の通常のキー処理で更新されるはず！
+        // 検索入力欄にフォーカスを戻す (既にフォーカスされてるはずだけど念のため)
+        searchInput?.focus();
+        // 以降の通常のキー処理に進ませるために return しないよ！
+      } else {
+        // 上記以外のキーは実行履歴モード中は無視する
+        return;
+      }
+      return; // 実行履歴モードでのキー操作が完了したら、他の処理はしないよ！
+    }
     // ★★★ ヘルプモード中のキー操作をここに追加！ ★★★
     if (isHelpModeActive) {
       if (event.key === 'ArrowUp') {
@@ -666,18 +855,19 @@ async function fetchAndSetIconType(itemPath: string) {
   }
 
   // ファイルやフォルダを実行する処理（Windows用: startコマンドで開く）
-  function executeResult(result: SearchResult) {
+  async function executeResult(result: SearchResult) {
     if (!result) return;
     // ファイルパスを取得
     const path = result.path;
-    // Tauri経由でOSのコマンドを実行する（invokeでRust側に投げるのが安全！）
-    invoke('open_path', { path })
-      .then(() => {
+    try {
+      // Tauri経由でOSのコマンドを実行する（invokeでRust側に投げるのが安全！）
+      await invoke('open_path', { path });
         console.log('ファイル/フォルダを開いたよ！', path);
-      })
-      .catch((err) => {
+        // ★★★ 実行したパスを実行履歴に追加！ ★★★
+        addRunHistoryItem(path);
+    } catch (err) {
         console.error('ファイル/フォルダの実行に失敗しちゃった…', err);
-      });
+    }
   }
 
   // ページがぴょこって表示されたら、キー入力の準備をするよ！
@@ -719,14 +909,20 @@ async function fetchAndSetIconType(itemPath: string) {
         }).catch(() => {});
       });
     
-    // ★★★ 検索履歴を読み込むよ！ ★★★
-    invoke<string[]>('load_search_history')
+    // ★★★ 検索履歴と実行履歴を読み込むよ！ (ステップ1) ★★★
+    invoke<string[]>('load_search_history_cmd') // ★★★ コマンド名を修正！ ★★★
       .then(history => {
         searchHistory = history;
         console.log(`検索履歴を ${history.length} 件読み込んだよ！ (o^∀^o)`);
       })
       .catch(err => console.error('検索履歴の読み込みに失敗しちゃった… (´；ω；｀)', err));
 
+    invoke<string[]>('load_run_history_cmd') // ★★★ コマンド名を修正！ ★★★
+      .then(history => {
+        runHistory = history;
+        console.log(`実行履歴を ${history.length} 件読み込んだよ！ (๑•̀ㅂ•́)و✧`);
+      })
+      .catch(err => console.error('実行履歴の読み込みに失敗しちゃった… (´；ω；｀)', err));
 
     const currentAppWindow = WebviewWindow.getCurrent();
     currentAppWindow.outerPosition().then(pos => {
@@ -840,6 +1036,31 @@ async function fetchAndSetIconType(itemPath: string) {
     });
   }
 
+  // ★★★ メッセージエリア（ヘルプや実行履歴表示用）の高さに合わせてウィンドウ高さを調整する関数！ (新規追加) ★★★
+  async function adjustWindowHeightForMessageArea(messageAreaEl: HTMLElement | null) {
+    if (!messageAreaEl || currentWindowWidth === undefined) return;
+
+    await tick(); // DOM更新を待つ
+
+    const searchInputEl = searchInput;
+    if (!searchInputEl) return;
+
+    try {
+      const searchInputHeight = searchInputEl.offsetHeight || 40; // 検索入力欄の高さ
+      const messageAreaActualHeight = messageAreaEl.offsetHeight; // メッセージエリアの実際の高さ
+      const verticalPaddingAndMargins = 40; // 上下の余白やマージンなど（適宜調整してね！）
+
+      const targetWindowHeight = searchInputHeight + messageAreaActualHeight + verticalPaddingAndMargins;
+
+      await WebviewWindow.getCurrent().setSize(new PhysicalSize(currentWindowWidth, Math.round(targetWindowHeight)));
+    } catch (e) {
+      console.error("メッセージエリア表示時のウィンドウサイズ変更に失敗:", e);
+    }
+  }
+
+  // ★★★ 実行履歴表示モードの時のウィンドウ高さ調整 (新規追加のリアクティブ処理) ★★★
+  $: if (isRunHistoryModeActive) { adjustWindowHeightForMessageArea(messageAreaElementRef); }
+
 // itemCountはSvelteのリアクティブ変数として宣言！
 $: itemCount = calcItemCount(totalResultsCountFromRust, displayLimit);
 
@@ -900,8 +1121,8 @@ const handleScroll = createScrollHandler({
     <p class={styles['loading-message']}>検索してるよ... ちょっと待ってね！ ٩(ˊᗜˋ*)و</p>
   {/if}
 
-  {#if isHelpModeActive && helpContentText}
-    <!-- ヘルプモードの時は、message要素に特別なクラスをつけて、中身もヘルプ専用にするよ！ -->
+  {#if (isHelpModeActive && helpContentText) || (isRunHistoryModeActive && runHistory.length > 0)}
+    <!-- ヘルプモード または 実行履歴表示モードの時は、このエリアを使うよ！ -->
     <div
       bind:this={messageAreaElementRef}
       class="{styles.message} {styles['message-as-help-scroll']}"
@@ -911,17 +1132,66 @@ const handleScroll = createScrollHandler({
       <div
         bind:this={helpInnerContentElementRef}
         class={styles['help-scroll-inner-text']}
-        style="transform: translateY({helpScrollTransformY}px);"
+        style="transform: translateY({isHelpModeActive ? helpScrollTransformY : 0}px);"
       >
-        {helpContentText}
+        {#if isHelpModeActive}
+          {helpContentText}
+        {:else if isRunHistoryModeActive}
+          <!-- ★★★ ここから実行履歴リストの骨組み！ ★★★ -->
+          <p class={styles['run-history-header']}>{get(t)('commands.runhistory.listHeader')}</p>
+          <div class={styles['run-history-list']}>
+            <!-- ★★★ ここに #each でリストアイテムを表示するよ！ ★★★ -->
+            {#each runHistory as itemPath, index (itemPath)}
+              {@const isSelected = selectedRunHistoryIndex === index}
+              {@const baseName = getBaseName(itemPath)}
+              {@const displayPath = itemPath.replace(/^file:[/]+/, '')}
+              <div
+                class="{styles.item} {isSelected ? styles.selected : ''}"
+                aria-label={itemPath}
+                on:click={async () => {
+                  selectedRunHistoryIndex = index; // クリックされたアイテムを選択状態に
+                  await executeAndExitRunHistoryMode(itemPath);
+                }}
+                on:keydown={async (event) => {
+                  // Enterキーかスペースキーで実行できるようにするよ！
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault(); // デフォルトの動作（スペースでのスクロールなど）を防ぐ
+                    // このアイテムを実行してモードを終了するよ！
+                    await executeAndExitRunHistoryMode(itemPath);
+                  }
+                }}
+                role="option"
+                aria-selected={isSelected ? 'true' : 'false'}
+                tabindex={isSelected ? 0 : -1}
+              >
+                {#await getIconType(itemPath) then iconType}
+                  <div class={styles['item-icon-area']}>
+                    {#if iconType === 'file'}
+                      <FileIcon />
+                    {:else if iconType === 'folder'}
+                      <FolderIcon />
+                    {/if}
+                  </div>
+                {:catch error}
+                  <div class={styles['item-icon-area']}></div> <!-- エラー時もレイアウトが崩れないように空のdiv -->
+                {/await}
+                <div class={styles['item-text-area']}>
+                  <span class={styles['item-name']}>{baseName}</span>
+                  {#if displayPath !== baseName}
+                    <span class={styles['item-path']} title={displayPath}>{displayPath}</span>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     </div>
-  {:else if message && !isHelpModeActive}
-    <!-- 通常のメッセージ表示 (ヘルプモードじゃない時だけ) -->
+  {:else if message && !isHelpModeActive && !isRunHistoryModeActive}
     <p class:error-message={message.includes('エラー')} class={styles.message} role="status" aria-live="polite">{message}</p>
   {/if}
 
-  {#if totalResultsCountFromRust > 0 && !isHelpModeActive} <!-- ヘルプモードの時は結果リストは表示しないよ -->
+  {#if totalResultsCountFromRust > 0 && !isHelpModeActive && !isRunHistoryModeActive} <!-- ヘルプモードと実行履歴モードの時は結果リストは表示しないよ -->
     <div 
       class={styles['results-list-scroll-container']}
       bind:this={resultsListScrollContainerElement}
@@ -960,12 +1230,12 @@ const handleScroll = createScrollHandler({
         {/each}
       </div>
     </div>
-    {#if selectedIndex >= 0 && totalResultsCountFromRust > 0 && visibleItems.length > 0 && !isHelpModeActive}
+    {#if selectedIndex >= 0 && totalResultsCountFromRust > 0 && visibleItems.length > 0 && !isHelpModeActive && !isRunHistoryModeActive}
       <p class={styles['position-info']}>
         ({selectedIndex + 1} / {totalResultsCountFromRust})
       </p>
     {/if}
-    {#if overflowMessageText && totalResultsCountFromRust > displayLimit && !isHelpModeActive}
+    {#if overflowMessageText && totalResultsCountFromRust > displayLimit && !isHelpModeActive && !isRunHistoryModeActive}
       <p class={styles['overflow-message']}>{overflowMessageText}</p>
     {/if}
   {/if}

@@ -10,8 +10,9 @@ use std::fs;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 
+pub mod history_manager;
+
 const SETTINGS_FILE_NAME: &str = "seeku-settings.json";
-const HISTORY_FILE_NAME: &str = "seeku-history.json"; // ★★★ 履歴ファイル名を追加！ ★★★
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,8 +42,10 @@ pub fn run() {
       searcher::perform_search,
       searcher::get_search_results_slice,
       searcher::get_icon_for_path,
-      load_search_history, // ★★★ 履歴読み込みコマンドを登録！ ★★★
-      save_search_history  // ★★★ 履歴保存コマンドを登録！ ★★★
+      load_search_history_cmd,
+      save_search_history_cmd,
+      load_run_history_cmd,
+      save_run_history_cmd
     ])
     // メニューで何かイベントがあったら…
     .on_menu_event(|app, event| {
@@ -163,33 +166,26 @@ fn open_path_as_admin(path: String) -> Result<()> {
   Ok(())
 }
 
-// ★★★ ここから検索履歴の読み書きコマンドを追加するよ！ ★★★
+// --- History Commands ---
+// これらのコマンドは history_manager の関数を呼び出すラッパーになります。
 
-fn get_history_path(app_handle: &AppHandle<Wry>) -> Result<PathBuf> {
-  let mut path = app_handle.path().app_config_dir()?;
-  if !path.exists() {
-    fs::create_dir_all(&path)?;
-  }
-  path.push(HISTORY_FILE_NAME);
-  Ok(path)
+// Changed return type to tauri::Result and map String error to tauri::Error
+#[tauri::command]
+fn load_search_history_cmd(app_handle: AppHandle<Wry>) -> tauri::Result<Vec<String>> {
+    history_manager::load_search_history(&app_handle).map_err(|e| tauri::Error::Anyhow(anyhow!(e)))
 }
 
 #[tauri::command]
-fn load_search_history(app_handle: AppHandle<Wry>) -> Result<Vec<String>> {
-  let path = get_history_path(&app_handle)?;
-  if path.exists() {
-    let content = fs::read_to_string(path)?;
-    let history: Vec<String> = serde_json::from_str(&content)?;
-    Ok(history)
-  } else {
-    Ok(Vec::new()) // 履歴ファイルがなかったら空のVecを返すよ！
-  }
+fn save_search_history_cmd(app_handle: AppHandle<Wry>, history: Vec<String>) -> tauri::Result<()> {
+    history_manager::save_search_history(&app_handle, history).map_err(|e| tauri::Error::Anyhow(anyhow!(e)))
 }
 
 #[tauri::command]
-fn save_search_history(app_handle: AppHandle<Wry>, history: Vec<String>) -> Result<()> {
-  let path = get_history_path(&app_handle)?;
-  let content = serde_json::to_string_pretty(&history)?;
-  fs::write(path, content)?;
-  Ok(())
+fn load_run_history_cmd(app_handle: AppHandle<Wry>) -> tauri::Result<Vec<String>> {
+    history_manager::load_run_history(&app_handle).map_err(|e| tauri::Error::Anyhow(anyhow!(e)))
+}
+
+#[tauri::command]
+fn save_run_history_cmd(app_handle: AppHandle<Wry>, history: Vec<String>) -> tauri::Result<()> {
+    history_manager::save_run_history(&app_handle, history).map_err(|e| tauri::Error::Anyhow(anyhow!(e)))
 }

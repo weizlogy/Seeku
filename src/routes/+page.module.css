@@ -213,3 +213,24 @@ input::placeholder {
   white-space: nowrap; /* メッセージが途中で改行されないようにするね */
   opacity: 1; /* 前は0.8だったけど、しっかり見えるように1に戻すよ！ */
 }
+
+/* 実行履歴リストのヘッダー (styles.runHistoryHeader で使うよ！) */
+.run-history-header {
+  font-weight: bold;
+  margin-bottom: 10px;
+  padding: 0 10px; /* ヘルプのテキストエリアとの見た目を合わせる感じ */
+  color: var(--text-color);
+}
+
+/* 実行履歴リストのコンテナ (styles.runHistoryList で使うよ！) */
+.run-history-list {
+  /* 特に指定がなければ空でもOK！ 必要なら余白とか設定してね */
+}
+
+/* 選択された実行履歴アイテムのスタイル (styles.selected で使うよ！) */
+.selected { /* .item.selected とは別の、汎用的な選択スタイルとして定義 */
+  background-color: var(--item-selected); /* 背景色を変数から拝借！ */
+  /* color: var(--text-color); */ /* 文字色は .run-history-item から継承される想定。もし変えたいならここで指定！ */
+  /* 例えば、背景が明るい色なら、文字は濃い色がいいよね！ */
+  /* color: #FFFFFF; /* もし背景が濃くて文字を白くしたい場合とか */
+}

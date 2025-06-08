@@ -28,6 +28,9 @@
       "cleared": "Search history cleared completely! (｀・ω・´)ゞ",
       "empty": "No search history yet! Search a lot from now on! ✨"
     },
+    "runhistory": {
+      "listHeader": "Run History"
+    },
     "lang": {
       "notSupported": "Language switching is not supported in the current environment.",
       "currentAndAvailable": "Current language: {current}. Available: {available}.",

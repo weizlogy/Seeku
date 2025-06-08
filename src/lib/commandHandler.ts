@@ -23,6 +23,7 @@ function handleHelpCommand(setMessage: (msg: string) => void): void {
     { name: 'bgcolor', descriptionKey: 'commands.help.description.bgcolor', alias: 'backgroundcolor' }, // エイリアスも考慮
     { name: 'history', descriptionKey: 'commands.help.description.history' },
     { name: 'lang', descriptionKey: 'commands.help.description.lang' }, // ← 言語コマンドのヘルプ！
+    { name: 'rh', descriptionKey: 'commands.help.description.runhistory', alias: 'runhistory' }, // ← 実行履歴コマンドのヘルプ！
     // 新しいコマンドを追加したらここにも追加するよ！
   ];
 
@@ -192,6 +193,84 @@ function handleLangCommand(
     }
   }
 }
+
+// ★★★ 実行履歴コマンド用の処理関数！ ★★★
+/**
+ * 実行履歴コマンドを処理するよ！
+ * @param commandParts コマンドの引数部分の配列
+ * @param setMessage 画面にメッセージを表示するための関数
+ * @param options コマンド実行に必要なオプション
+ */
+async function handleRunHistoryCommand(
+  commandParts: string[],
+  setMessage: (msg: string) => void,
+  options?: {
+    runHistory?: string[];
+    setRunHistory?: (newHistory: string[]) => void;
+    saveRunHistory?: () => Promise<void>;
+    maxRunHistoryCount?: number;
+    setMaxRunHistoryCount?: (newCount: number) => Promise<void>;
+    executePath?: (path: string, runAsAdmin?: boolean) => Promise<void>;
+  }
+): Promise<void> {
+  const t = get($_);
+  const {
+    runHistory,
+    setRunHistory,
+    saveRunHistory,
+    maxRunHistoryCount,
+    setMaxRunHistoryCount,
+    executePath
+  } = options || {};
+
+  if (!runHistory || !setRunHistory || !saveRunHistory || !setMaxRunHistoryCount || !executePath) {
+    setMessage(t('commands.runhistory.error'));
+    return;
+  }
+
+  const subCommand = commandParts[1]?.toLowerCase();
+  const arg = commandParts[2];
+
+  if (subCommand === 'clear') {
+    setRunHistory([]);
+    await saveRunHistory().catch(e => console.error(t('commands.runhistory.clearError'), e));
+    setMessage(t('commands.runhistory.cleared'));
+  } else if (subCommand === 'limit') {
+    if (!arg) {
+      setMessage(t('commands.runhistory.limit.current', { values: { count: maxRunHistoryCount ?? t('commands.runhistory.limit.notSet') } }));
+      return;
+    }
+    const newLimit = parseInt(arg, 10);
+    if (isNaN(newLimit) || newLimit < 0) {
+      setMessage(t('commands.runhistory.limit.invalidNumber', { values: { example: '/rh limit 20' } }));
+      return;
+    }
+    try {
+      await setMaxRunHistoryCount(newLimit);
+      setMessage(t('commands.runhistory.limit.set', { values: { count: newLimit } }));
+    } catch (e) {
+      console.error(t('commands.runhistory.limit.setError'), e);
+      setMessage(t('commands.runhistory.limit.setErrorMsg'));
+    }
+  } else if (subCommand && !isNaN(parseInt(subCommand, 10))) {
+    const index = parseInt(subCommand, 10) - 1;
+    if (index >= 0 && index < runHistory.length) {
+      const path = runHistory[index];
+      setMessage(t('commands.runhistory.executing', { values: { path } }));
+      await executePath(path).catch((e: any) => setMessage(t('commands.runhistory.execError', { values: { path, error: e.message } })));
+    } else {
+      setMessage(t('commands.runhistory.invalidIndex', { values: { index: subCommand } }));
+    }
+  } else if (!subCommand && runHistory.length === 0) {
+    setMessage(t('commands.runhistory.empty'));
+  } else if (!subCommand) {
+    const historyText = t('commands.runhistory.listHeader') + '\n--------------------\n' + runHistory.map((item, index) => `${index + 1}: ${item}`).join('\n');
+    setMessage(historyText);
+  } else {
+    setMessage(t('commands.runhistory.unknownSubCommand', { values: { subCommand } }));
+  }
+}
+
 // コマンド名と処理関数をマッピングするオブジェクトだよ！
 // これがディスパッチテーブルってやつだね！
 const commandMap: {
@@ -210,6 +289,13 @@ const commandMap: {
       setLocale?: (newLocale: string) => void; // ← 言語設定用
       currentLocale?: string | null | undefined; // ← 現在の言語取得用
       availableLocales?: string[]; // ← 利用可能な言語リスト用
+      // ↓ 実行履歴関連のオプションも追加！
+      runHistory?: string[];
+      setRunHistory?: (newHistory: string[]) => void;
+      saveRunHistory?: () => Promise<void>;
+      maxRunHistoryCount?: number;
+      setMaxRunHistoryCount?: (newCount: number) => Promise<void>;
+      executePath?: (path: string, runAsAdmin?: boolean) => Promise<void>;
     }
   ) => Promise<void> | void; // 非同期処理を含むコマンドがあるので Promise<void> | void
 } = {
@@ -219,6 +305,8 @@ const commandMap: {
   backgroundcolor: handleBackgroundColorCommand, // エイリアスも！
   history: handleHistoryCommand, // ★★★ 履歴コマンドを追加！ ★★★
   lang: handleLangCommand, // ← 言語コマンドを追加！
+  rh: handleRunHistoryCommand, // ★★★ 実行履歴コマンドを追加！ ★★★
+  runhistory: handleRunHistoryCommand, // エイリアスも！
   // 新しいコマンドはここにどんどん追加していけるよ！
   // 例: 'anotherCommand': handleAnotherCommand,
 };
@@ -238,6 +326,12 @@ const commandMap: {
  *   - `setLocale?`: 言語を設定する関数
  *   - `currentLocale?`: 現在の言語 (例: 'en', 'ja')
  *   - `availableLocales?`: 利用可能な言語の配列 (例: ['en', 'ja'])
+ *   - `runHistory?`: 現在の実行履歴の配列
+ *   - `setRunHistory?`: 実行履歴を更新する関数
+ *   - `saveRunHistory?`: 実行履歴を永続化する関数
+ *   - `maxRunHistoryCount?`: 現在の実行履歴の最大保存件数
+ *   - `setMaxRunHistoryCount?`: 実行履歴の最大保存件数を設定する関数
+ *   - `executePath?`: 指定されたパスを実行する関数
  */
 export async function handleCommand(
   command: string,
@@ -255,6 +349,13 @@ export async function handleCommand(
     setLocale?: (newLocale: string) => void; // ← 追加！
     currentLocale?: string | null | undefined; // ← 追加！
     availableLocales?: string[]; // ← 追加！
+    // ↓ 実行履歴関連のオプションも追加！
+    runHistory?: string[];
+    setRunHistory?: (newHistory: string[]) => void;
+    saveRunHistory?: () => Promise<void>;
+    maxRunHistoryCount?: number;
+    setMaxRunHistoryCount?: (newCount: number) => Promise<void>;
+    executePath?: (path: string, runAsAdmin?: boolean) => Promise<void>;
   }
 ): Promise<void> {
   const commandParts = command.substring(1).split(' ');

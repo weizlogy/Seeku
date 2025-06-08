@@ -28,6 +28,9 @@
       "cleared": "検索履歴をぜーんぶ消しちゃった！ (｀・ω・´)ゞ",
       "empty": "まだ検索履歴がないみたいだよ！これからたくさん検索してね！ ✨"
     },
+    "runhistory": {
+      "listHeader": "実行履歴"
+    },
     "lang": {
       "notSupported": "現在の環境では言語の切り替えはサポートされていません。",
       "currentAndAvailable": "現在の言語: {current}。利用可能な言語: {available}。",
